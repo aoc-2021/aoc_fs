@@ -14,14 +14,12 @@ let slides =
    let slideSum n = depths.[n] + depths.[n-1] + depths.[n-2]
    indexes |> Seq.map slideSum |> Seq.toArray 
    
-
-let delta (depths:array<int>) (i:int): int = depths.[i] - depths.[i-1]
 let diffs (depths:array<int>) =
     let deltas = seq { 1 .. (depths.Length-1) }
     let delta (i:int): int = depths.[i] - depths.[i-1]
     deltas |> Seq.map delta |> Seq.toArray
 
-let pos x = x > 0
+let pos = (<) 0  
 let incs = diffs depths |> Seq.filter pos |> Seq.toArray |> Array.length
 let slideIncs = diffs slides |> Seq.filter pos |> Seq.toArray |> Array.length 
 
