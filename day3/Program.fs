@@ -7,10 +7,11 @@ let digs (line:String) : array<char> =
     let chars = line.ToCharArray () 
     chars 
 
-let toSign (i:char) =
-    if i = '1' then 1L
-    else if i = '0' then -1L
-    else i |> int64 
+let toSign (c:char) =
+    match c with
+    | '1' -> 1L
+    | '0' -> -1L
+    | c -> failwith $"Not a valid binary digit: {c}"
 
 let adds (line:String) =
     let chars = digs line
@@ -19,26 +20,15 @@ let adds (line:String) =
 
 let adders = lines |> Seq.map adds 
 
-let dig1 = adders |> Seq.map (fun x -> x.[0]) |> Seq.sum
-let dig2 = adders |> Seq.map (fun x -> x.[1]) |> Seq.sum 
-let dig3 = adders |> Seq.map (fun x -> x.[2]) |> Seq.sum 
-let dig4 = adders |> Seq.map (fun x -> x.[3]) |> Seq.sum 
-let dig5 = adders |> Seq.map (fun x -> x.[4]) |> Seq.sum 
-let dig6 = adders |> Seq.map (fun x -> x.[5]) |> Seq.sum 
-let dig7 = adders |> Seq.map (fun x -> x.[6]) |> Seq.sum 
-let dig8 = adders |> Seq.map (fun x -> x.[7]) |> Seq.sum 
-let dig9 = adders |> Seq.map (fun x -> x.[8]) |> Seq.sum 
-let dig10 = adders |> Seq.map (fun x -> x.[9]) |> Seq.sum 
-let dig11 = adders |> Seq.map (fun x -> x.[10]) |> Seq.sum 
-let dig12 = adders |> Seq.map (fun x -> x.[11]) |> Seq.sum 
+let sumColumn (list: seq<array<int64>>) (index: int) : int64 =
+    list |> Seq.map (fun x -> x.[index]) |> Seq.sum 
 
-let line1 = adders |> Seq.head |> Array.toList
-printfn $"{line1.[4]} {line1.[5]} {line1.[6]}"
+let dig = {0 .. 11} |> Seq.map (adders |> sumColumn) |> Seq.toArray 
 
 let toGamma (i:int64) = if i > 0L then 1L else 0L
 let toEpsilon (i:int64) = if i < 0L then 1L else 0L 
 
-let origs = [dig1;dig2;dig3;dig4;dig5;dig6;dig7;dig8;dig9;dig10;dig11;dig12] 
+let origs = dig |> Seq.toList
 let gammaBits = origs |> List.map toGamma
 let epsilonBits = origs |> List.map toEpsilon
 
@@ -49,7 +39,7 @@ let rec toDecimal (acc:int64) (l:list<int64>) =
 let gamma = toDecimal 0L gammaBits
 let epsilon = toDecimal 0L epsilonBits
 
-printfn $"File: {dig1} {dig2} {dig3} {dig4} {dig5} {dig6} {dig7} {dig8} {dig9} {dig10} {dig11} {dig12}"
+printfn $"File: {dig.[0]} {dig.[1]} {dig.[2]} {dig.[3]} {dig.[4]} {dig.[5]} {dig.[6]} {dig.[7]} {dig.[8]} {dig.[9]} {dig.[10]} {dig.[11]}"
 
 printfn $"Res gammaBits = {gammaBits} gamma={gamma} e={epsilonBits} e={epsilon}"
 printfn $"Res = {gamma*epsilon}"
