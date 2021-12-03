@@ -1,15 +1,7 @@
-
-
 open System
 open System.IO
 
-let readFile (fileName: String) = seq {
-   use sr = new StreamReader(fileName)
-   while not sr.EndOfStream do
-      yield sr.ReadLine ()
-}
-
-let lines = readFile "input.txt" |> Seq.toArray
+let lines = File.ReadLines "input.txt" |> Seq.toArray
 
 let digs (line:String) : array<char> =
     let chars = line.ToCharArray () 
