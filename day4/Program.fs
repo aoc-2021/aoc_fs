@@ -43,6 +43,10 @@ let isWinner (draws:Set<int>) (board:int[][])  =
 let getWinners (draw:Set<int>) =
     boards |> Seq.filter (isWinner draw) |> Seq.toList 
 
+let getLosers (draw:Set<int>) =
+    boards |> Seq.filter (fun board -> not(isWinner draw board)) |> Seq.toList 
+
+
 let draws = {0.. numbers.Length-1}
             |> Seq.map (fun l -> numbers.[0..l] |> Set)
             |> Seq.toList
@@ -63,6 +67,26 @@ let rec findWinner (draws: List<Set<int>>) (nums:List<int>) =
         printfn $"winner: {winners.Length} {winner} {final}"
     else
         findWinner draws.Tail nums.Tail 
-// printfn (draws)
+
+let rec playOutLoser (board:int[][]) (draws:List<Set<int>>) (nums:List<int>) =
+    let draw = draws.Head
+    let lastNum = nums.Head 
+    if isWinner draw board then
+        let boardScore = score board draw
+        let final = lastNum * boardScore
+        printfn $"loser: {final}"
+    else
+        playOutLoser board draws.Tail nums.Tail 
+        
+let rec findLoser (draws: List<Set<int>>) (nums:List<int>) =
+    let draw = draws.Head
+    let lastNum = nums.Head
+    let losers = getLosers draw 
+    if losers.Length < 2 then
+        let loser = losers.Head
+        playOutLoser loser draws nums 
+    else
+        findLoser draws.Tail nums.Tail 
 
 findWinner draws (numbers |> Array.toList)
+findLoser draws (numbers |> Array.toList)
