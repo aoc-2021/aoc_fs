@@ -15,7 +15,9 @@ let pipes = lines |> Array.map (fun s -> Regex.Replace (s," -> ", ","))
 
 // let pipes = pipesX |> Array.filter isGrid 
 
-let stepTo v1 v2 = if v1 < v2 then v1+1 else v1-1
+let stepTo v1 v2 =
+    if v1 < v2 then v1+1
+    else if v1 > v2 then v1-1 else v1 
 
 let rec explode (pipe:array<int>) : list<(int * int)> =
     let x1 = pipe.[0]
@@ -27,9 +29,8 @@ let rec explode (pipe:array<int>) : list<(int * int)> =
     if x1 = x2 && y1 = y2 then
         point::[]
     else
-        let nextArray =
-            if x1 = x2 then [x1;(stepTo y1 y2);x2;y2] |> Seq.toArray
-            else [(stepTo x1 x2);y1;x2;y2] |> Seq.toArray 
+        let nextArray = [(stepTo x1 x2);(stepTo y1 y2);x2;y2] |> Seq.toArray
+            // else [(stepTo x1 x2);y1;x2;y2] |> Seq.toArray 
         point::(explode nextArray)
                 
 let x = explode pipes.[0]
