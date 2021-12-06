@@ -32,12 +32,12 @@ let origs = dig |> Seq.toList
 let gammaBits = origs |> List.map toGamma
 let epsilonBits = origs |> List.map toEpsilon
 
-let rec toDecimal (acc:int64) (l:list<int64>) =
-    if l.IsEmpty then acc
-    else toDecimal (acc * 2L + l.Head) (l.Tail) 
+let toDecimal =
+    let addDigit num digit = num * 2L + digit
+    List.fold addDigit 0L  
 
-let gamma = toDecimal 0L gammaBits
-let epsilon = toDecimal 0L epsilonBits
+let gamma = toDecimal gammaBits
+let epsilon = toDecimal epsilonBits
 
 printfn $"File: {dig.[0]} {dig.[1]} {dig.[2]} {dig.[3]} {dig.[4]} {dig.[5]} {dig.[6]} {dig.[7]} {dig.[8]} {dig.[9]} {dig.[10]} {dig.[11]}"
 
@@ -65,14 +65,13 @@ let rec filter2 (digits: list<array<int64>>) (pos:int) =
 let oxygenValue = filter (adders |> Seq.toList) 0
 let co2Value = filter2 (adders |> Seq.toList) 0
 
-let rec toDecimal2 (acc:int64) (l:list<int64>) =
-    if l.IsEmpty then acc
-    else
-        let dig = if l.Head = 1L then 1L else 0L 
-        toDecimal2 (acc * 2L + dig) (l.Tail) 
+let rec toDecimal2 =
+        let toBinaryDigit i = if i = 1L then 1L else 0L
+        let acc num digit = num * 2L + (toBinaryDigit digit)
+        List.fold acc 0L
 
-let oxygen = toDecimal2 0L (oxygenValue |> Array.toList)
-let co2 = toDecimal2 0L (co2Value |> Array.toList)
+let oxygen = toDecimal2 (oxygenValue |> Array.toList)
+let co2 = toDecimal2 (co2Value |> Array.toList)
 printfn $"Filtered: oxygen = {oxygen}" 
 printfn $"Filtered: co2 = {co2}"
 
