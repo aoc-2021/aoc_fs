@@ -13,37 +13,34 @@ let fishCount:(int*int64)[] = fish |> Array.groupBy id  |> Array.map toCount
 
 printfn $"{fishCount |> Array.toList}"
 
-let toMap (fish:(int*int64)[]) :Map<int,int64> =
-   fish |> Array.toSeq |> Map 
-
 let getCountForFish (n:int) (fish:Map<int,int64>) =
    match fish.TryFind n with
       | None -> 0L
       | Some(fishCount) -> fishCount 
 
 let removeFish (fishNo:int) (fish:Map<int,int64>) =
-   fish.Remove fishNo |> Map.toArray 
+   fish.Remove fishNo
 
 let addNewFish (fishNo:int) (n:int64) (fish:Map<int,int64>) =
    if getCountForFish fishNo fish > 0L then failwith $"Fish already exists: {fishNo}"
-   fish.Add (fishNo,n) |> Map.toArray 
+   fish.Add (fishNo,n) 
 
-let addToFish (fishNo:int) (n:int64) (fish:(int*int64)[]) =
-   let current = getCountForFish fishNo (toMap fish)
+let addToFish (fishNo:int) (n:int64) (fish:Map<int,int64>) =
+   let current = getCountForFish fishNo fish
    let newCount = current + n
-   let withoutFish = removeFish fishNo (toMap fish)
-   addNewFish fishNo newCount (toMap withoutFish) 
+   let withoutFish = removeFish fishNo fish
+   addNewFish fishNo newCount withoutFish
 
-let countDownAll (fish:Map<int,int64>) =
-   fish |> Map.toArray |> Array.map (fun f -> ((fst f)-1),(snd f))
+let countDownAll (fish:Map<int,int64>) : Map<int,int64> =
+   fish |> Map.toSeq |> Seq.map (fun f -> ((fst f)-1),(snd f)) |> Map 
 
 let fIter (fish:(int*int64)[]) =
-   let zeroes = getCountForFish 0 (toMap fish)
-   let fish = removeFish 0 (toMap fish)
+   let zeroes = getCountForFish 0 (Map fish)
+   let fish = removeFish 0 (Map fish)
    let fish = addToFish 7 zeroes fish
-   let fish = countDownAll (toMap fish)
-   let fish = addNewFish 8 zeroes (toMap fish) 
-   fish
+   let fish = countDownAll fish
+   let fish = addNewFish 8 zeroes fish 
+   fish |> Map.toArray 
    
 let rec fIterN (n:int) (fish:(int*int64)[]) =
    if n = 0 then fish
