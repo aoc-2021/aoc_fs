@@ -13,31 +13,36 @@ let fishCount:(int*int64)[] = fish |> Array.groupBy id  |> Array.map toCount
 
 printfn $"{fishCount |> Array.toList}"
 
-let getCountForFish (n:int) (fish:(int*int64)[]) =
-   let matches = fish |> Array.filter (fun f -> fst f = n)
-   if matches.Length = 1 then snd (matches.[0]) else 0 
+let toMap (fish:(int*int64)[]) :Map<int,int64> =
+   fish |> Array.toSeq |> Map 
 
-let removeFish (fishNo:int) (fish:(int*int64)[]) =
-   fish |> Array.filter (fun f -> not((fst f) = fishNo)) 
+let getCountForFish (n:int) (fish:Map<int,int64>) =
+   match fish.TryFind n with
+      | None -> 0L
+      | Some(fishCount) -> fishCount 
 
-let addNewFish (fishNo:int) (n:int64) (fish:(int*int64)[]) =
+let removeFish (fishNo:int) (fish:Map<int,int64>) =
+   fish.Remove fishNo |> Map.toArray 
+
+let addNewFish (fishNo:int) (n:int64) (fish:Map<int,int64>) =
    if getCountForFish fishNo fish > 0L then failwith $"Fish already exists: {fishNo}"
-   else (fishNo,n) :: (fish |> Array.toList) |> List.toArray 
+   fish.Add (fishNo,n) |> Map.toArray 
 
 let addToFish (fishNo:int) (n:int64) (fish:(int*int64)[]) =
-   let current = getCountForFish fishNo fish
+   let current = getCountForFish fishNo (toMap fish)
    let newCount = current + n
-   let withoutFish = removeFish fishNo fish
-   addNewFish fishNo newCount withoutFish 
+   let withoutFish = removeFish fishNo (toMap fish)
+   addNewFish fishNo newCount (toMap withoutFish) 
 
-let countDownAll (fish:(int*int64)[]) = fish |> Array.map (fun f -> ((fst f)-1),(snd f))
+let countDownAll (fish:Map<int,int64>) =
+   fish |> Map.toArray |> Array.map (fun f -> ((fst f)-1),(snd f))
 
 let fIter (fish:(int*int64)[]) =
-   let zeroes = getCountForFish 0 fish
-   let fish = removeFish 0 fish
+   let zeroes = getCountForFish 0 (toMap fish)
+   let fish = removeFish 0 (toMap fish)
    let fish = addToFish 7 zeroes fish
-   let fish = countDownAll fish
-   let fish = addNewFish 8 zeroes fish 
+   let fish = countDownAll (toMap fish)
+   let fish = addNewFish 8 zeroes (toMap fish) 
    fish
    
 let rec fIterN (n:int) (fish:(int*int64)[]) =
