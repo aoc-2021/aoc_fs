@@ -4,17 +4,15 @@ let file = File.ReadAllLines "input.txt"
 
 let fish = file.[0].Split ',' |> Array.map int
 
-let toCount ((fish,fishes):(int*int[])) = (fish,fishes.Length |> int64)
-let fishCount:(int*int64)[] = fish |> Array.groupBy id  |> Array.map toCount
+let toCount ((fish,fishes):int*int[]) = (fish,fishes.Length |> int64)
+let fishCount:(int*int64)[] = fish |> Array.groupBy id |> Array.map toCount
 
-let getCountForFish (n:int) (fish:Map<int,int64>) =
-   fish.TryFind n |> Option.defaultValue 0L
+let getCountForFish (fishNo:int) (fish:Map<int,int64>) =
+   fish.TryFind fishNo |> Option.defaultValue 0L
 
 let addToFish (fishNo:int) (n:int64) (fish:Map<int,int64>) =
-   let current = getCountForFish fishNo fish
-   let newCount = current + n
-   let withoutFish = fish.Remove fishNo 
-   withoutFish.Add (fishNo,newCount)
+   let current = fish |> getCountForFish fishNo
+   fish.Add (fishNo, current + n)
 
 let countDownAll (fish:Map<int,int64>) : Map<int,int64> =
    let decKey (fish,count) = (fish-1,count)
