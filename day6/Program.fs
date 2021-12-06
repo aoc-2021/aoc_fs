@@ -6,23 +6,6 @@ let fish = file.[0].Split ',' |> Array.map int
 
 printfn $"fish {fish}"
 
-let iterateFish (fish:int[]) =
-   let newFish = fish |> Array.filter ((=) 0) |> Array.map (fun x -> 8)
-   let rotated = fish |> Array.map (fun x -> if x = 0 then 6 else x - 1)
-   Array.append rotated newFish
-   
-let x = iterateFish ([2;3;2;0;1] |> List.toArray) |> Array.toList
-
-let rec iterN (n:int) (fish:int[]) =
-   if n = 0 then fish
-   else iterN (n-1) (iterateFish fish)
-   
-let iter80 = iterN 80
-
-let fish80 = iter80 fish
-
-printfn $"Fish 80: {fish80.Length}"
-
 let toCount (x:(int*int[])) =
    let (fish,fishes) = x
    (fish,fishes.Length |> int64)
@@ -57,22 +40,14 @@ let fIter (fish:(int*int64)[]) =
    let fish = addNewFish 8 zeroes fish 
    fish
    
-let t = [(0,4L);(4,2L);(7,40L)] |> List.toArray
-let t2 = fIter t
-printfn $"t {t2 |> Array.toList}"
-let r3 = addToFish 7 11L t 
-printfn $"Added: {r3 |> Array.toList}"
-
 let rec fIterN (n:int) (fish:(int*int64)[]) =
-   printfn $"fish: {fish |> Array.toList}"
    if n = 0 then fish
    else fIterN (n-1) (fIter fish)
 
-let rec cFish80 = fIterN 256 fishCount 
+let cFish80 = fIterN 80 fishCount 
+let cFish256 = fIterN 256 fishCount 
 
-printfn $"{cFish80 |> Array.toList}"
+let count fish = fish |> Array.map snd |> Array.sum
 
-let count fish = cFish80 |> Array.map snd |> Array.sum
-
-printfn $"{count fishCount}"
-printfn $"{count cFish80}"
+printfn $"Part 1 (80 iterations): {count cFish80}"
+printfn $"Part 2 (256 iterations): {count cFish256}"
