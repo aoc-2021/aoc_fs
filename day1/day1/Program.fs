@@ -1,13 +1,6 @@
-open System
 open System.IO
 
-let readFile(filePath:String) = seq {
-    use sr = new StreamReader(filePath)
-    while not sr.EndOfStream do
-        yield sr.ReadLine () 
-}
-
-let depths = readFile("input.txt") |> Seq.map int |> Seq.toArray
+let depths = File.ReadAllLines "input.txt" |> Array.map int 
 
 let slides =
    let indexes = seq { 2 .. (depths.Length - 1) }
@@ -20,8 +13,8 @@ let diffs (depths:array<int>) =
     deltas |> Seq.map delta |> Seq.toArray
 
 let pos = (<) 0  
-let incs = diffs depths |> Seq.filter pos |> Seq.toArray |> Array.length
-let slideIncs = diffs slides |> Seq.filter pos |> Seq.toArray |> Array.length 
+let incs = diffs depths |> Seq.filter pos |> Seq.length
+let slideIncs = diffs slides |> Seq.filter pos |> Seq.length 
 
 printfn $"Solution 1: %A{incs}"
 printfn $"Solution 2: %A{slideIncs}"
