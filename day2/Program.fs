@@ -24,15 +24,10 @@ let adjustPos ((currFor,currDepth,currAim)) (forward,aimDelta) =
     let newAim = currAim + aimDelta
     (newForward,newDepth,newAim)
     
-let rec adjustPositions d (x:list<Tuple<int,int>>) =
-    if x.IsEmpty then d
-    else
-        let newPos = adjustPos d x.Head
-        adjustPositions newPos x.Tail
-        
-let finalPos = adjustPositions (0,0,0) moveAndAims
+let finalPos = moveAndAims |> List.fold adjustPos (0,0,0)
 
 let toAnswer (a,b,_) = (a |> int64) * (b |> int64)
 let answer = toAnswer finalPos
 
 printfn $"Task 2: {finalPos} {answer}"
+
