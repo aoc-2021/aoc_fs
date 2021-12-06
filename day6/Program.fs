@@ -2,10 +2,11 @@ open System.IO
 
 let file = File.ReadAllLines "input.txt"
 
-let fish = file.[0].Split ',' |> Array.map int
-
 let toCount ((fish,fishes):int*int[]) = (fish,fishes.Length |> int64)
-let fishCount:(int*int64)[] = fish |> Array.groupBy id |> Array.map toCount
+let fish = file.[0].Split ',' |> Array.map int
+           |> Array.groupBy id
+           |> Array.map toCount
+           |> Map 
 
 let getCountForFish (fishNo:int) (fish:Map<int,int64>) =
    fish.TryFind fishNo |> Option.defaultValue 0L
@@ -30,10 +31,10 @@ let rec fIterN (n:int) (fish:Map<int,int64>) =
    if n = 0 then fish
    else fIterN (n-1) (fIter fish)
 
-let cFish80 = fIterN 80 (Map fishCount) 
-let cFish256 = fIterN 256 (Map fishCount)
+let cFish80 = fIterN 80 fish
+let cFish256 = fIterN 256 fish
 
-let count fish = fish |> Map.toSeq |> Seq.map snd |> Seq.sum
+let count fish = fish |> Map.values |> Seq.sum 
 
 printfn $"Part 1 (80 iterations): {count cFish80}"
 printfn $"Part 2 (256 iterations): {count cFish256}"
