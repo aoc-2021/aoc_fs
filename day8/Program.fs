@@ -1,4 +1,3 @@
-
 open System
 open System.IO
 open System.Text.RegularExpressions
@@ -8,7 +7,7 @@ let file = File.ReadAllLines "input.txt"
 let outs = file |> Array.map (fun s -> s.Split '|')
                 |> Array.map (fun s -> s.[1])
                 |> Array.map (fun (s:string) -> s.Trim ' ')
-                |> Array.map (fun s -> s.Split ' ' |> Array.map (String.length) |> Array.toList)
+                |> Array.map (fun s -> s.Split ' ' |> Array.map String.length |> Array.toList)
                 |> Array.toList
 let outs2 = List.concat outs |> List.groupBy id
             |> List.map (fun (a,b) -> (a,b.Length))
@@ -19,12 +18,8 @@ let fours = outs2.TryFind 4 |> Option.defaultValue -1
 let sevens = outs2.TryFind 3 |> Option.defaultValue -1
 let eights = outs2.TryFind 7 |> Option.defaultValue -1
 
-// printfn $"{ones + fours + sevens + eights}"
 
-// printfn $"outs = ${outs2}"
-
-
-let segsForDigit (digit:int) =
+let segmentsForDigit (digit:int) =
             match digit with
             | 0 -> ['A';'B';'C';'E';'F';'G'] |> Set
             | 1 -> ['C';'F'] |> Set
@@ -40,20 +35,18 @@ let segsForDigit (digit:int) =
 
 let lengthToPossibleSegments (length:int) : Set<char> =
     match length with
-    | 2 -> segsForDigit 1 
-    | 3 -> segsForDigit 7
-    | 4 -> segsForDigit 4
-    | 5 -> [2;3;5] |> List.map segsForDigit |> Set.unionMany
-    | 6 -> [0;6;9] |> List.map segsForDigit |> Set.unionMany
-    | 7 -> segsForDigit 8
+    | 2 -> segmentsForDigit 1 
+    | 3 -> segmentsForDigit 7
+    | 4 -> segmentsForDigit 4
+    | 5 -> [2;3;5] |> List.map segmentsForDigit |> Set.unionMany
+    | 6 -> [0;6;9] |> List.map segmentsForDigit |> Set.unionMany
+    | 7 -> segmentsForDigit 8
     | l -> failwith $"invalid segment count {l}"
 
 type CDigit(wires:string) =
     member this.Wires = wires.ToCharArray () |> Set 
     override this.ToString () = wires
-    member this.PossibleSegments =
-        // printfn $"wires = {wires}"
-        wires.Length |> lengthToPossibleSegments
+    member this.PossibleSegments = wires.Length |> lengthToPossibleSegments
     
 type CLine(allDigits:list<CDigit>,answer:list<CDigit>) =
     member this.AllDigits = allDigits
@@ -66,8 +59,6 @@ let parseLine (s:string) =
     CLine(all,out)
     
 let clines = file |> Array.map parseLine
-
-// printfn $"{clines |> Array.toList}"
 
 let allPos = ['A';'B';'C';'D';'E';'F';'G'] |> Set 
 let allCandidates = ['a'..'g'] |> List.map (fun w -> (w,allPos)) |> Map
@@ -86,19 +77,9 @@ let filterCandidates (cands:Map<char,Set<char>>) (digit:CDigit) =
 
 let xx = filterCandidates allCandidates (CDigit("abdfg")) 
 
-let testLine = parseLine "acedgfb cdfbe gcdfa fbcad dab cefabd cdfgeb eafb cagedb ab | cdfeb fcadb cdfeb cdbaf"
-
-// printfn $"testline: {testLine}"
-
 let filterAll (digits:List<CDigit>) =
     let acc = allCandidates
     digits |> List.fold filterCandidates acc 
-
-let y = testLine.AllDigits |> filterAll 
-
-// y |> Map.toList |> List.map (fun f -> printfn $"ENTRY: {f}")
-
-// printfn $"y:{y}"
 
 let removeCandidate (c:char) (li:char*Set<char>) = (fst li, snd li |> Set.remove c)
 
@@ -120,8 +101,6 @@ let rec permute (cand:List<char*Set<char>>) : list<list<char*char>> =
         let perms = heads |> List.map forHead
         List.concat perms 
                            
-let permutes = permute (y |> Map.toList) |> List.map Map  
-// printfn $"{permutes}"
 
 let toSegment (mapping:Map<char,char>) (digit:CDigit) =
     let actualDigits = digit.Wires |> Set.map (fun c -> mapping.TryFind c |> Option.defaultValue 'X')
@@ -130,14 +109,6 @@ let toSegment (mapping:Map<char,char>) (digit:CDigit) =
 
 let toSegments (mapping:Map<char,char>) (digits:List<CDigit>) =
     digits |> List.map (toSegment mapping) 
-
-let segs  =
-    let digits = testLine.AllDigits
-    // printfn $"digits: {digits}"
-    // printfn $"permutes: {permutes}"
-    let wires = permutes |> List.map (fun permute -> toSegments permute digits)
-    // printfn $"wires: {wires}"
-    wires
 
 let toDec (segs:string) =
     match segs with
@@ -154,13 +125,6 @@ let toDec (segs:string) =
     | _ -> -1
 
 let valid (dec:list<int>) = not(dec |> List.contains -1)
-
-let decs = segs |> List.map (List.map toDec)
-let vdecs = decs |> List.filter valid 
-
-// printfn $"segs: {segs}"
-// printfn $"decs: {decs}"
-// printfn $"vdecs: {vdecs}"
 
 let isValid (line:CLine) (mapping:Map<char,char>) =
     let segs = line.AllDigits |> toSegments mapping
@@ -183,8 +147,6 @@ let findValue (line:CLine) =
     let mapping = findMapping line
     let decs = toSegments mapping line.Answer |> List.map toDec 
     decs |> List.fold (fun acc v -> acc*10+v) 0 
-
-// printfn $"value: ${findValue testLine}"
 
 let sum = clines |> Array.map findValue |> Array.sum
 
