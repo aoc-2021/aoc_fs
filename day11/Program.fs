@@ -85,5 +85,17 @@ let stepN (n:int) (octos:Octomap) =
    {1..n} |> Seq.fold (fun (octos,c) n ->
        let (octos,newFlashes) = step octos
        octos,newFlashes+c) (octos,0)
-
+   
 printfn $"99: {stepN 100 initMap}"
+
+// part 2
+let rec findFullFlash (octos:Octomap) (stepcount:int) : int =
+    let octos,flashes = step octos
+    printfn $"{stepcount}:{flashes}"
+    if flashes < 100 then
+        findFullFlash octos (stepcount+1)
+    else 
+        stepcount+1 
+
+let n = findFullFlash initMap 0
+printfn $"solution: {n}"
