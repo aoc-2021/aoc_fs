@@ -16,7 +16,7 @@ let input2 = [|
 "4846848554";
 "5283751526"|]
 
-let lines = input2
+let lines = input
 
 let octopuses =
     let toInt c = (int c) - (int '0')
@@ -60,26 +60,30 @@ let neighbors ((x,y):Point) : List<Point> =
      (x-1,y);          (x+1,y)
      (x-1,y+1);(x,y+1);(x+1,y+1)]
 
-let step (octos:Octomap) =
+let step (octos:Octomap) : Octomap*int =
     let octos = octos.IncByOne()
     printfn $"inced {octos}"
-    let rec flashOff (flashed:Set<Point>) (octos:Octomap) : Octomap =
+    let rec flashOff (flashed:Set<Point>) (octos:Octomap) : Octomap*int =
         let flashers = octos.Charged () |> Set.filter (fun p -> flashed.Contains p |> not)
-        if flashers.IsEmpty then octos
+        if flashers.IsEmpty then octos,flashed.Count
         else
             let hits = flashers |> Set.toList |> List.map neighbors |> List.concat
             let octos:Octomap = hits |> List.fold (fun octos -> octos.Hit) octos
             let flashed = Set.union flashed flashers
             flashOff flashed octos
-    let octos = flashOff Set.empty octos
+    let octos,flashCount = flashOff Set.empty octos
     let octos = octos.Defuse ()
-    octos 
+    octos,flashCount 
     
-let octos1:Octomap = step initMap 
+let octos1,flashCount = step initMap 
 
-let octos99 = {1..99} |> Seq.fold (fun octos n -> step octos) initMap 
+let octos99 = {1..99} |> Seq.fold (fun (octos,c) n ->
+    let (nextOctos,newFlashes) = step octos
+    (nextOctos,newFlashes+c)) (initMap,0)
 
 let stepN (n:int) (octos:Octomap) =
-   {1..n} |> Seq.fold (fun octos n -> step octos) octos 
+   {1..n} |> Seq.fold (fun (octos,c) n ->
+       let (octos,newFlashes) = step octos
+       octos,newFlashes+c) (octos,0)
 
-printfn $"99: {stepN 90 initMap}"
+printfn $"99: {stepN 100 initMap}"
