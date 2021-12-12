@@ -8,12 +8,16 @@ type Tube = Cave*Cave
 
 let allTubesForward: Set<Tube> = input |> List.map (fun s -> s.Split '-' |> fun s -> (s.[0],s[1])) |> Set
 let allTubesBackward: Set<Tube> = allTubesForward |> Set.map (fun (a,b) -> (b,a))
+let starts = allTubesForward |> Set.filter (fun (b,_) -> b = "start")
 
 let allTubes = Set.union allTubesForward allTubesBackward
 
-let starts = allTubes |> Set.filter (fun (b,_) -> b = "start")
 
-let tubes = allTubes |> Set.filter (fun (a,b) -> a = "start" || b = "start" |> not) 
+let tubes =
+            let isStartTube (a,b) = a = "start" || b = "start"
+            allTubes
+            |> Set.filter (fun tube -> isStartTube tube |> not) 
+            |> Set.filter (fun (s,_) -> not (s="end"))
 
 let isSmall (cave:Cave) = cave.ToCharArray () |> Array.exists Char.IsUpper |> not 
 
