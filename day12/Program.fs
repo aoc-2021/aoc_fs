@@ -63,11 +63,15 @@ let caveMap: CaveMap =
 let isSmall (cave: Cave) = cave > -1
 
 type Visited = Set<int> 
-type Memo = Map<bool*Visited*Cave,int>
+type Memo (memoMap: Map<bool*Visited*Cave,int>) =
+    member this.HasForVisited () = true
+    member this.Lookup = memoMap.TryFind
+    member this.Add entry = Memo (memoMap.Add entry)
+    static member empty = Memo(Map.empty)
 
 let rec expand (memo:Memo) (denySecondVisits: bool) (visitedSmall: Visited) (caveMap: CaveMap) (e: Cave) : Memo*int =
    let memoKey = (denySecondVisits,visitedSmall,e)
-   let memoValue = memo.TryFind(memoKey)
+   let memoValue = memo.Lookup(memoKey)
    if memoValue.IsSome then memo,memoValue |> Option.get
    else 
         let secondVisit = isSmall e && visitedSmall.Contains e
@@ -95,7 +99,7 @@ let paths1 =
     starts
     |> Set.toList
     |> List.map snd
-    |> List.map (expand Map.empty true Set.empty caveMap)
+    |> List.map (expand Memo.empty true Set.empty caveMap)
     |> List.map snd 
     |> List.sum 
 
@@ -103,7 +107,7 @@ let paths2 =
     starts
     |> Set.toList
     |> List.map snd
-    |> List.map (expand Map.empty false Set.empty caveMap)
+    |> List.map (expand Memo.empty false Set.empty caveMap)
     |> List.map snd 
     |> List.sum 
 
