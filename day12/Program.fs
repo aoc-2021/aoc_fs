@@ -15,25 +15,28 @@ let starts = allTubes |> Set.filter (fun (b,_) -> b = "start")
 
 let tubes = allTubes |> Set.filter (fun (a,b) -> a = "start" || b = "start" |> not)
 
-type CaveMap = Map<Cave,list<Tube>>
-let caveMap : CaveMap = tubes |> Set.toList |> List.groupBy fst |> Map 
+type CaveMap = Map<Cave,list<Cave>>
+let caveMap : CaveMap =
+        tubes |> Set.toList |> List.groupBy fst
+              |> List.map (fun (cave,tubes) -> (cave,(tubes |> List.map snd)))
+              |> Map 
 
 let isSmall (cave:Cave) = cave.ToCharArray () |> Array.exists Char.IsUpper |> not 
 
-let rec expand (denySecondVisits:bool) (visitedSmall:Set<string>) (caveMap:CaveMap) ((s,e):Tube) =
+let rec expand (denySecondVisits:bool) (visitedSmall:Set<string>) (caveMap:CaveMap) (e:Cave) =
     let secondVisit = isSmall e && visitedSmall.Contains e
     let visitedSmall = if isSmall e then visitedSmall.Add e else visitedSmall 
     if secondVisit && denySecondVisits then []
-    else if e = "end" then [[(s,e)]]
+    else if e = "end" then [[e]]
     else
         let denySecondVisits = denySecondVisits || secondVisit
         let nexts = caveMap.TryFind e |> Option.defaultValue []
-        let nextPaths : List<List<Tube>> = nexts |> List.map (expand denySecondVisits visitedSmall caveMap) |> List.concat
-        let paths = nextPaths |> List.map (fun path -> (s,e)::path)
+        let nextPaths : List<List<Cave>> = nexts |> List.map (expand denySecondVisits visitedSmall caveMap) |> List.concat
+        let paths = nextPaths |> List.map (fun path -> e::path)
         paths 
          
-let paths1 = starts |> Set.toList |> List.map (expand true Set.empty caveMap) |> List.concat 
-let paths2 = starts |> Set.toList |> List.map (expand false Set.empty caveMap) |> List.concat 
+let paths1 = starts |> Set.toList |> List.map snd |> List.map (expand true Set.empty caveMap) |> List.concat 
+let paths2 = starts |> Set.toList |> List.map snd |> List.map (expand false Set.empty caveMap) |> List.concat 
 
 printfn $"Task 1: {paths1.Length}" // correct is 3463
 printfn $"Task 2: {paths2.Length}" // correct is 91533
