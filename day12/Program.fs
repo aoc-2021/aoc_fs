@@ -19,7 +19,7 @@ let isSmall (cave:Cave) = cave.ToCharArray () |> Array.exists Char.IsUpper |> no
 
 let rec expand (denySecondVisits:bool) (visitedSmall:Set<string>) (rest:Set<Tube>) ((s,e):Tube) =
     let secondVisit = isSmall e && visitedSmall.Contains e
-    let visitedSmall = if goesToSmall (s,e) then visitedSmall.Add e else visitedSmall 
+    let visitedSmall = if isSmall e then visitedSmall.Add e else visitedSmall 
     if secondVisit && denySecondVisits then []
     else if e = "end" then [[(s,e)]]
     else
