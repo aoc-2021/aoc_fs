@@ -66,33 +66,30 @@ type Visited = Set<int>
 type Memo = Map<bool*Visited*Cave,int>
 
 let rec expand (memo:Memo) (denySecondVisits: bool) (visitedSmall: Visited) (caveMap: CaveMap) (e: Cave) : Memo*int =
-    let secondVisit = isSmall e && visitedSmall.Contains e
-
-    let visitedSmall =
-        if isSmall e then
-            visitedSmall.Add e
+   let memoKey = (denySecondVisits,visitedSmall,e)
+   let memoValue = memo.TryFind(memoKey)
+   if memoValue.IsSome then memo,memoValue |> Option.get
+   else 
+        let secondVisit = isSmall e && visitedSmall.Contains e
+        let visitedSmall = if isSmall e then visitedSmall.Add e else visitedSmall
+        if secondVisit && denySecondVisits then memo,0
+        elif e = END then memo,1
         else
-            visitedSmall
+            let denySecondVisits = denySecondVisits || secondVisit
+            let nexts = caveMap.TryFind e |> Option.defaultValue []
+        
+            let (memo,count): Memo*int =
+                let callNext ((memo,count):Memo*int) (cave:Cave) =
+                    let memo,more = expand memo denySecondVisits visitedSmall caveMap cave
+                    memo,(count+more)
+                nexts |> List.fold callNext (memo,0) 
 
-    if secondVisit && denySecondVisits then
-        memo,0
-    else if e = END then
-        memo,1
-    else
-        let denySecondVisits = denySecondVisits || secondVisit
-
-        let nexts = caveMap.TryFind e |> Option.defaultValue []
-
-        let nextPaths: Memo*int =
-            let callNext ((memo,count):Memo*int) (cave:Cave) =
-                let memo,more = expand memo denySecondVisits visitedSmall caveMap cave
-                memo,(count+more)
-            nexts
-            |> List.fold callNext (memo,0) 
-
-        let paths = nextPaths 
-
-        paths
+            let memo = memo.Add (memoKey,count)
+            let memoOk = match memoValue with
+                         | Some(memoed) -> memoed = count
+                         | None -> true
+            if not memoOk then printfn $"memoed wrong: {memoValue} actual={count}"
+            (memo,count)
 
 let paths1 =
     starts
