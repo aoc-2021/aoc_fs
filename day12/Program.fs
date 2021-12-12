@@ -63,11 +63,16 @@ let caveMap: CaveMap =
 let isSmall (cave: Cave) = cave > -1
 
 type Visited = Set<int> 
-type Memo (memoMap: Map<bool*Visited*Cave,int>) =
-    member this.HasForVisited () = true
-    member this.Lookup = memoMap.TryFind
-    member this.Add entry = Memo (memoMap.Add entry)
-    static member empty = Memo(Map.empty)
+type Memo (caves:Set<int>,memoMap: Map<bool*Visited*Cave,int>) =
+    let maybePresent (denyRevisits,visited,cave)  =
+        caves.Contains (if denyRevisits then cave + 100000 else cave)
+    member this.Lookup entry =
+        if maybePresent entry then memoMap.TryFind entry else None 
+    member this.Add entry value =
+        let denyRevisits,visited,cave = entry
+        let cave = if denyRevisits then cave + 100000 else cave 
+        Memo(caves.Add cave,(memoMap.Add (entry,value)))
+    static member empty = Memo(Set.empty,Map.empty)
 
 let rec expand (memo:Memo) (denySecondVisits: bool) (visitedSmall: Visited) (caveMap: CaveMap) (e: Cave) : Memo*int =
    let memoKey = (denySecondVisits,visitedSmall,e)
@@ -88,7 +93,7 @@ let rec expand (memo:Memo) (denySecondVisits: bool) (visitedSmall: Visited) (cav
                     memo,(count+more)
                 nexts |> List.fold callNext (memo,0) 
 
-            let memo = memo.Add (memoKey,count)
+            let memo = memo.Add memoKey count
             let memoOk = match memoValue with
                          | Some(memoed) -> memoed = count
                          | None -> true
