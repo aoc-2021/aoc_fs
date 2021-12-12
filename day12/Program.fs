@@ -52,22 +52,22 @@ let goesToSmall (tube:Tube) =
     if cave = "end" then false
     else cave.ToCharArray () |> Array.filter Char.IsUpper |> Array.isEmpty
 
-let rec expand (visitedSmall:Set<string>) (rest:Set<Tube>) (tube:Tube) =
-    if visitedSmall.Contains (snd tube) then []
+let rec expand (visitedTwice:bool) (visitedSmall:Set<string>) (rest:Set<Tube>) (tube:Tube) =
+    let secondVisit = goesToSmall tube && visitedSmall.Contains (snd tube)
+    let visitedSmall = if goesToSmall tube then visitedSmall.Add (snd tube) else visitedSmall 
+    if secondVisit && visitedTwice then []
     else if snd tube = "end" then [[tube]]
     else
-        let visitedSmall =
-            if goesToSmall tube then visitedSmall.Add (snd tube)
-            else visitedSmall 
+        let visitedTwice = visitedTwice || secondVisit
         printfn $"expand {visitedSmall} {rest} {tube}"
         let continuesTube fromTube tube = snd fromTube = fst tube  
         let nexts : List<Tube> = rest |> Set.filter (continuesTube tube) |> Set.toList 
         printfn $"tube={tube} nexts={nexts}"
-        let nextPaths : List<List<Tube>> = nexts |> List.map (expand visitedSmall rest) |> List.concat
+        let nextPaths : List<List<Tube>> = nexts |> List.map (expand visitedTwice visitedSmall rest) |> List.concat
         let paths = nextPaths |> List.map (fun path -> tube::path)
         paths 
          
-let paths = starts |> Set.toList |> List.map (expand Set.empty tubes) |> List.concat 
+let paths = starts |> Set.toList |> List.map (expand false Set.empty tubes) |> List.concat 
 
 printfn $"paths: {paths.Length} {paths}"
 
