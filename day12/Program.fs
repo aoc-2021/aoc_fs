@@ -62,10 +62,10 @@ let caveMap: CaveMap =
 
 let isSmall (cave: Cave) = cave > -1
 
-// type Memo = Map<bool*Set<int>,List<int>>,list<List<Cave>>>
+type Visited = Set<int> 
+type Memo = Map<bool*Visited*Cave,int>
 
-
-let rec expand (denySecondVisits: bool) (visitedSmall: Set<int>) (caveMap: CaveMap) (e: Cave) =
+let rec expand (memo:Memo) (denySecondVisits: bool) (visitedSmall: Visited) (caveMap: CaveMap) (e: Cave) : Memo*int =
     let secondVisit = isSmall e && visitedSmall.Contains e
 
     let visitedSmall =
@@ -75,18 +75,20 @@ let rec expand (denySecondVisits: bool) (visitedSmall: Set<int>) (caveMap: CaveM
             visitedSmall
 
     if secondVisit && denySecondVisits then
-        0
+        memo,0
     else if e = END then
-        1
+        memo,1
     else
         let denySecondVisits = denySecondVisits || secondVisit
 
         let nexts = caveMap.TryFind e |> Option.defaultValue []
 
-        let nextPaths: int =
+        let nextPaths: Memo*int =
+            let callNext ((memo,count):Memo*int) (cave:Cave) =
+                let memo,more = expand memo denySecondVisits visitedSmall caveMap cave
+                memo,(count+more)
             nexts
-            |> List.map (expand denySecondVisits visitedSmall caveMap)
-            |> List.sum 
+            |> List.fold callNext (memo,0) 
 
         let paths = nextPaths 
 
@@ -96,14 +98,16 @@ let paths1 =
     starts
     |> Set.toList
     |> List.map snd
-    |> List.map (expand true Set.empty caveMap)
+    |> List.map (expand Map.empty true Set.empty caveMap)
+    |> List.map snd 
     |> List.sum 
 
 let paths2 =
     starts
     |> Set.toList
     |> List.map snd
-    |> List.map (expand false Set.empty caveMap)
+    |> List.map (expand Map.empty false Set.empty caveMap)
+    |> List.map snd 
     |> List.sum 
 
 printfn $"Task 1: {paths1}" // correct is 3463
