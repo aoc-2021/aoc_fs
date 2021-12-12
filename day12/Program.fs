@@ -62,6 +62,9 @@ let caveMap: CaveMap =
 
 let isSmall (cave: Cave) = cave > -1
 
+// type Memo = Map<bool*Set<int>,List<int>>,list<List<Cave>>>
+
+
 let rec expand (denySecondVisits: bool) (visitedSmall: Set<int>) (caveMap: CaveMap) (e: Cave) =
     let secondVisit = isSmall e && visitedSmall.Contains e
 
@@ -72,22 +75,20 @@ let rec expand (denySecondVisits: bool) (visitedSmall: Set<int>) (caveMap: CaveM
             visitedSmall
 
     if secondVisit && denySecondVisits then
-        []
+        0
     else if e = END then
-        [ [ e ] ]
+        1
     else
         let denySecondVisits = denySecondVisits || secondVisit
 
-        let nexts =
-            caveMap.TryFind e |> Option.defaultValue []
+        let nexts = caveMap.TryFind e |> Option.defaultValue []
 
-        let nextPaths: List<List<Cave>> =
+        let nextPaths: int =
             nexts
             |> List.map (expand denySecondVisits visitedSmall caveMap)
-            |> List.concat
+            |> List.sum 
 
-        let paths =
-            nextPaths |> List.map (fun path -> e :: path)
+        let paths = nextPaths 
 
         paths
 
@@ -96,14 +97,14 @@ let paths1 =
     |> Set.toList
     |> List.map snd
     |> List.map (expand true Set.empty caveMap)
-    |> List.concat
+    |> List.sum 
 
 let paths2 =
     starts
     |> Set.toList
     |> List.map snd
     |> List.map (expand false Set.empty caveMap)
-    |> List.concat
+    |> List.sum 
 
-printfn $"Task 1: {paths1.Length}" // correct is 3463
-printfn $"Task 2: {paths2.Length}" // correct is 91533
+printfn $"Task 1: {paths1}" // correct is 3463
+printfn $"Task 2: {paths2}" // correct is 91533
