@@ -13,29 +13,9 @@ let rules : Map<char*char,char> =
         (input,output) 
     input.Tail.Tail |> List.map toRule |> Map 
     
-let rec processTemplate (template:list<char>) (rules:Map<char*char,char>) =
-   match template with
-   | [] -> template 
-   | [ _ ] -> template
-   | a::b::tail ->
-       match rules.TryFind (a,b) with
-       | None -> a::processTemplate (b::tail) rules 
-       | Some(c) -> a::c::processTemplate (b::tail) rules
-
-let processed1 = processTemplate template rules
-
-let processed = {1..10} |> Seq.fold (fun acc _ -> processTemplate acc rules ) template
-
 let elemCounts processed  = processed |> List.groupBy id |> List.map (fun (e,es) -> (e,es.Length |> int64))
 
 let initElemCount = elemCounts template
-let processedElemCount = elemCounts processed 
-
-let minMax elemCounts = elemCounts |> List.fold (fun (small,big) (_,count) -> (min small count,max big count)) (1000000L,0L)
-
-let answer (small,big) = big - small
-
-printfn $"Task 1: {answer (minMax (elemCounts processed))}"
 
 type Pair = char*char
 
@@ -85,10 +65,27 @@ let rec fastProcess ((elements,pairs):ElemCounts*PairCounts) : ElemCounts*PairCo
 let fproc1 = fastProcess (counts,initPairs |> Map)
 
 
-let fprocessed = {1..40} |> Seq.fold (fun acc _ -> fastProcess acc) (counts,initPairs |> Map) 
+let fprocess n = {1..n} |> Seq.fold (fun acc _ -> fastProcess acc) (counts,initPairs |> Map)
 
-let fastCounts = fprocessed |> fst |> Map.toList |> List.map snd
-let fastMax = fastCounts |> List.max
-let fastMin = fastCounts |> List.min
 
-printfn $"Task 2: {fastMax-fastMin}"
+let fastCounts fresult = fresult |> fst |> Map.toList |> List.map snd
+
+let solve (n:int) =
+    let fprocessed = fprocess n
+    let fastCounts = fastCounts fprocessed
+    let fastMax = fastCounts |> List.max
+    let fastMin = fastCounts |> List.min
+    fastMax - fastMin 
+
+let stopWatch1 = System.Diagnostics.Stopwatch.StartNew()
+printfn $"Task 1: {solve 10}"
+stopWatch1.Stop ()
+printfn $"{stopWatch1.Elapsed.TotalMilliseconds}"
+
+let stopWatch2 = System.Diagnostics.Stopwatch.StartNew()
+printfn $"Task 2: {solve 40}"
+stopWatch2.Stop ()
+printfn $"{stopWatch2.Elapsed.TotalMilliseconds}"
+
+// Task 1: 4517
+// Task 2: 4704817645083
