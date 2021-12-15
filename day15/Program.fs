@@ -19,6 +19,7 @@ let input = input1
 type Point = int * int
 type Risk = int
 type Path = List<Point>
+type Points = Set<Point>
 
 let cave =
     input
@@ -55,7 +56,7 @@ let findNeighborsX (available: Set<Point>) ((x, y): Point) : List<Point> =
     |> Set.toList
 
 let riskOfPoint (risks:Map<Point,Risk>) (pos:Point) =
-    risks.TryFind pos |> Option.defaultValue 1000
+    risks.TryFind pos |> Option.defaultValue 100000
 
 let estimatedRisk (x,y) : Risk = ((maxX - x) + (maxY - y)) * 4
 
@@ -72,34 +73,47 @@ let findNeighbors (available: Set<Point>) ((x, y): Point) : List<Point> =
 let distToEnd (x, y) : Risk = (maxX - x) + (maxY - y)
 let minRisk currPos currRisk : Risk = currRisk + (distToEnd currPos)
 
-let rec findNewPath (bestRisk, bestPath) (pathBack: Path) (available: Set<Point>) (risk: Risk) (pos: Point) =
-    let available = available.Remove pos
-    let pathBack = pos :: pathBack
+let removePrevAvailable (available:Points) (pathBack:Path) =
+    if pathBack.Length < 3 then available 
+    else
+        let (x,y) = pathBack.Tail.Head
+        let prevNeighbors = [(x-1,y);(x+1,y);(x,y-1);(x,y+1)]
+        prevNeighbors |> List.fold (fun acc -> acc.Remove) available
 
-    let risk =
-        risks.TryFind pos
-        |> Option.defaultValue 100000
-        |> ((+) risk)
-    // printfn $"risk {risk}"
-    if minRisk pos risk >= bestRisk then
-        (bestRisk, bestPath)
+let worstRisk (x,y) = 9*x + 9*y
+let isWorseThan (pointRisks:Map<Point,Risk>) (pos:Point) (risk:Risk) =
+    let worse = pointRisks.TryFind pos |> Option.map (fun prev -> prev < risk) |> Option.defaultValue false
+    // printfn $"isWorseThan {pos} {risk} -> {worse}"
+    worse
+let rec findNewPath (bestRisk, pointRisks, bestPath) (pathBack: Path) (available: Set<Point>) (risk: Risk) (pos: Point) =
+    let available = available.Remove pos
+    let available = removePrevAvailable available pathBack
+    let pathBack = pos :: pathBack
+    let risk = riskOfPoint risks pos + risk
+    if isWorseThan pointRisks pos risk then (bestRisk,pointRisks,bestPath) 
+    else if minRisk pos risk >= bestRisk then (bestRisk,pointRisks,bestPath)
     else if pos = endPos then
         printfn $"found candidate: risk={risk}"
-        risk, pathBack |> List.rev
+        risk, pointRisks, pathBack |> List.rev
     else
-        let findForPos (best: Risk * Path) (pos: Point) : Risk * Path =
+        // printfn $"Adding pointRisks: {(pos,risk)}"
+        let pointRisks = pointRisks.Add (pos,risk)
+        let findForPos (best: Risk * Map<Point,Risk> * Path) (pos: Point) : Risk * Map<Point,Risk> * Path =
             findNewPath best pathBack available risk pos
 
         let neighbors = findNeighbors available pos
 
         neighbors
-        |> List.fold findForPos (bestRisk, bestPath)
+        |> List.fold findForPos (bestRisk, pointRisks, bestPath)
 
 
-let maxCost = 9 * maxX + 9 * maxY
+// let maxCost = 9 * maxX + 9 * maxY
+
+let maxCost = 749
 
 let bestPath =
-    findNewPath (maxCost, [ -1, -1 ]) [] points 0 startPos
+    let risk,cache,path = findNewPath (maxCost, Map.empty, [ -1, -1 ]) [] points 0 startPos
+    risk,path 
 
 let bestCost =
     fst bestPath - (risks.TryFind(0, 0) |> Option.get)
