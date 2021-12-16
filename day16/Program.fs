@@ -66,6 +66,7 @@ let rec readBy5 (bits:Bits) =
 type Packet =
     | Literal of int*int
     | Op6 of int*List<Packet>
+    | Op3 of int*List<Packet>
     | PUnknown of int*int 
 
 type LengthType =
@@ -85,6 +86,13 @@ let readNum (bits:Bits) =
     | _ -> failwith $"not a number: {bits}"
 
 let rec decodePacket (bits:Bits) : Packet*Bits =
+    let rec readPackets (n:int) (bits:Bits) : List<Packet>*Bits =
+        if n = 0 then [],bits
+        else
+            let packet,bits = decodePacket bits 
+            let packets,bits = readPackets (n-1) bits 
+            (packet::packets),bits  
+        
     let version = bits |> List.take 3 |> binToInt 
     let bits = bits |> List.skip 3 
     let typeId = bits |> List.take 3 |> binToInt 
@@ -103,6 +111,12 @@ let rec decodePacket (bits:Bits) : Packet*Bits =
         let package1,subs = decodePacket subs
         let package2,subs = decodePacket subs
         (Op6 (version,[package1;package2])),bits
+    | 3 ->
+        let subPackages,bits = readNum bits
+        printfn $"subPackages: {subPackages}"
+        let subs,bits = readPackets subPackages bits 
+        // let package2,subs = decodePacket subs
+        (Op3 (version,subs)),bits
     | _ -> (PUnknown (version,typeId)),bits
 
 decodePacket bits
@@ -112,3 +126,6 @@ printfn $"package = {package}"
 
 let package2 = decodePacket ("00111000000000000110111101000101001010010001001000000000" |> toBits)
 printfn $"package2 = {package2}"
+
+let package3 = decodePacket ("11101110000000001101010000001100100000100011000001100000" |> toBits)
+printfn $"package3 = {package3}"
