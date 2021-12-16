@@ -22,42 +22,33 @@ let hexToBinary =
       ('F', "1111") ]
     |> Map
 
-let decode (input: string) =
+let decodeHex (input: string) =
     input.ToCharArray()
     |> Array.map hexToBinary.TryFind
     |> Array.map Option.get
     |> String.Concat
 
-let binaryString = decode file
+let binaryString = decodeHex file
 
 type Bit = int64
 type Bits = list<Bit>
 
 let toBits (binaryString: string) : Bits =
+    let toBit (c: char) : Bit = (int c) - (int '0') |> int64
+
     binaryString.ToCharArray()
-    |> Array.map (fun c -> ((int c) - (int '0')) |> int64)
+    |> Array.map toBit
     |> Array.toList
 
-let bits = toBits binaryString
+let inputBits = toBits binaryString
 
 let binToInt (bits: Bits) : int64 =
-    let rec multUp (value: int64) (bits: Bits) =
-        match bits with
-        | [] -> value
-        | a :: tail -> multUp (value * 2L + a) tail
-
-    multUp 0 bits
-
-let rec padTo4 (bits: Bits) =
-    if bits.Length % 4 = 0 then
-        bits
-    else
-        padTo4 (0 :: bits)
+    bits |> List.fold (fun acc d -> acc*2L + d) 0L
 
 let rec readBy5 (bits: Bits) =
     match bits with
     | 1L :: a :: b :: c :: d :: tail ->
-        let (value, rest) = readBy5 tail
+        let value, rest = readBy5 tail
         (a :: b :: c :: d :: value), rest
     | 0L :: a :: b :: c :: d :: tail -> [ a; b; c; d ], tail
     | _ -> failwith $"Unexpected input: {bits}"
@@ -70,25 +61,24 @@ type LengthType =
     | L15
     | LUnknown
 
-let readNum (bits: Bits) =
-    match bits with
-    | 0L :: tail ->
-        let num = tail |> List.take 15 |> binToInt
-        let tail = tail |> List.skip 15
-        num, tail
-    | 1L :: tail ->
-        let num = tail |> List.take 11 |> binToInt
-        let tail = tail |> List.skip 11
-        num, tail
-    | _ -> failwith $"not a number: {bits}"
+let readNum (n: int) (bits: Bits) : int64 * Bits =
+    let num = bits |> List.take n |> binToInt
+    let rest = bits |> List.skip n
+    num, rest
+    
+let readBits (n: int64) (bits: Bits) : Bits * Bits =
+    let n = n |> int 
+    let taken = bits |> List.take n
+    let bits = bits |> List.skip n
+    taken, bits 
 
 let rec decodePacket (bits: Bits) : Packet * Bits =
-    let rec readPackets (n: int) (bits: Bits) : List<Packet> * Bits =
+    let rec readPackets (n: int64) (bits: Bits) : List<Packet> * Bits =
         if n = 0 then
             [], bits
         else
             let packet, bits = decodePacket bits
-            let packets, bits = readPackets (n - 1) bits
+            let packets, bits = readPackets (n - 1L) bits
             (packet :: packets), bits
 
     let rec readAll (bits: Bits) : List<Packet> * Bits =
@@ -102,16 +92,13 @@ let rec decodePacket (bits: Bits) : Packet * Bits =
     let readSubs (bits: Bits) : List<Packet> * Bits =
         match bits with
         | 0L :: bits ->
-            let argSize = bits |> List.take 15 |> binToInt |> int
-            let bits = bits |> List.skip 15
-            let argBits = bits |> List.take argSize
-            let bits = bits |> List.skip argSize
+            let argSize,bits = bits |> readNum 15
+            let argBits, bits = bits |> readBits argSize
             let subs, _ = readAll argBits
             subs, bits
         | 1L :: bits ->
-            let argCount = bits |> List.take 11 |> binToInt |> int
-            let bits = bits |> List.skip 11
-            let subs, bits = readPackets argCount bits
+            let argCount,bits = bits |> readNum 11
+            let subs, bits = bits |> readPackets argCount
             subs, bits
         | _ -> failwith $"invalid value: {bits}"
 
@@ -129,7 +116,7 @@ let rec decodePacket (bits: Bits) : Packet * Bits =
         let subs, bits = readSubs bits
         (Op(version, op, subs)), bits
 
-let structure, _ = decodePacket bits
+let structure, _ = decodePacket inputBits
 
 let rec count (packet: Packet) =
     match packet with
