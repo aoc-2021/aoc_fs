@@ -144,6 +144,7 @@ let rec eval (packet: Packet) : int64 =
         let s1 = eval subs.Head
         let s2 = eval subs.Tail.Head
         if s1 = s2 then 1L else 0L
+    | _ -> failwith $"Unknown packet: {packet}"
 
 let task2 = eval structure
 printfn $"Task 2: {task2}"
