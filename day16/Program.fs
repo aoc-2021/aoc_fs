@@ -102,10 +102,8 @@ let rec decodePacket (bits: Bits) : Packet * Bits =
             subs, bits
         | _ -> failwith $"invalid value: {bits}"
 
-    let version = bits |> List.take 3 |> binToInt
-    let bits = bits |> List.skip 3
-    let typeId = bits |> List.take 3 |> binToInt
-    let bits = bits |> List.skip 3
+    let version, bits = bits |> readNum 3
+    let typeId, bits = bits |> readNum 3
 
     match typeId with
     | 4L ->
@@ -118,12 +116,12 @@ let rec decodePacket (bits: Bits) : Packet * Bits =
 
 let structure, _ = decodePacket inputBits
 
-let rec count (packet: Packet) =
+let rec sumVersions (packet: Packet) =
     match packet with
-    | Literal (version, num) -> version
-    | Op (version, op, subs) -> version + (subs |> List.map count |> List.sum)
+    | Literal (version, _) -> version
+    | Op (version, _, subs) -> version + (subs |> List.map sumVersions |> List.sum)
 
-let task1 = count structure
+let task1 = sumVersions structure
 
 printfn $"Task 1: {task1}"
 
