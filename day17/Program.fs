@@ -3,16 +3,6 @@ open System.Text.RegularExpressions
 
 let file = File.ReadAllLines "input.txt"
 
-type Position = int64 * int64
-
-type Velocity(dx:int64, dy:int64) =
-    member this.Dx = dx
-    member this.Dy = dy
-    
-    member this.FirstPos : Position = (dx,dy)
-    override this.ToString () =
-        $"Velocity({dx},{dy})"
-
 type Area = int64 * int64 * int64 * int64
 
 let parseInput (input:string[]) : Option<Area> = 
@@ -22,27 +12,29 @@ let parseInput (input:string[]) : Option<Area> =
        let [x1;x2;y1;y2] = result.Groups.Values |> Seq.toList |> List.tail |> List.map string |> List.map int64
        Some (x1,y1,x2,y2)
 
+type Position = int64 * int64
 
+type Velocity(dx:int64, dy:int64) =
+    member this.Dx = dx
+    member this.Dy = dy
+    
+    member this.FirstPos : Position = (dx,dy)
+    override this.ToString () =
+        $"Velocity({dx},{dy})"
+    member this.nextVelocity () : Velocity  =
+        let xAdjust =
+            if dx = 0L then 0L
+            else -dx/(abs(dx))
+        Velocity(dx + xAdjust,dy-1L)
 
-let target : Area = parseInput file |> Option.get 
-
-// let target = fileArea file
+    member this.adjustPos ((x,y):Position) = (x+dx,y+dy)
 
 let testTarget = (20L, -10L, 30L, -5L)
 let startPos: Position = 0, 0
 
-let step ((posX, posY): Position) (velocity: Velocity) : Position * Velocity =
-    let posX = posX + velocity.Dx
-    let posY = posY + velocity.Dy
-
-    let xAdjust =
-        if velocity.Dx = 0L then 0L
-        else if velocity.Dx > 0L then -1L
-        else 1L
-
-    let veloX = velocity.Dx + xAdjust
-    let veloY = velocity.Dy - 1L
-    (posX, posY), Velocity(veloX, veloY)
+let step (pos: Position) (velocity: Velocity) : Position * Velocity =
+    let pos = velocity.adjustPos pos  
+    pos, (velocity.nextVelocity ())
 
 let isHit ((minX, minY, maxX, maxY): Area) ((x, y): Position) =
     x >= minX && x <= maxX && y >= minY && y <= maxY
@@ -194,7 +186,7 @@ let solve2 (target: Area) =
     let best = best velos
     printfn $"task 1: {best}"
 
-solve2 target
+// solve2 target
 
 let underX1 ((x1, _, x2, _): Area) ((x, y): Position) (velocity: Velocity) = velocity.Dx = 0 && x < x1
 
@@ -226,4 +218,6 @@ let solve3 ((x1, y1, x2, y2): Area) =
 
     printfn $"task 2: {results}"
 
+let target : Area = parseInput file |> Option.get 
+solve2 target 
 solve3 target
