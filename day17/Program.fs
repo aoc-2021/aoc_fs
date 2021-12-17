@@ -1,40 +1,48 @@
 open System.IO
+open System.Text.RegularExpressions
 
 let file = File.ReadAllLines "input.txt"
 
-type Velocity = int64 * int64
 type Position = int64 * int64
+
+type Velocity(dx:int64, dy:int64) =
+    member this.Dx = dx
+    member this.Dy = dy
+    
+    member this.FirstPos : Position = (dx,dy)
+    override this.ToString () =
+        $"Velocity({dx},{dy})"
 
 type Area = int64 * int64 * int64 * int64
 
-let fileArea (file: string []) : Area =
-    let parts: string [] = file.[0].Split '='
-    let parts2 = parts.[1].Split ','
-    let xes = parts2.[0].Split '.'
-    let yes = parts.[2].Split '.'
-    let minX = xes.[0] |> int64
-    let maxX = xes.[2] |> int64
-    let minY = yes.[0] |> int64
-    let maxY = yes.[2] |> int64
-    minX, minY, maxX, maxY
+let parseInput (input:string[]) : Option<Area> = 
+    match Regex.Match (file.[0],@"target area: x=(-?\d+)\.\.(-?\d+), y=(-?\d+)\.\.(-?\d+)*") with
+    | failed when not failed.Success -> None
+    | result ->
+       let [x1;x2;y1;y2] = result.Groups.Values |> Seq.toList |> List.tail |> List.map string |> List.map int64
+       Some (x1,y1,x2,y2)
 
-let target = fileArea file
+
+
+let target : Area = parseInput file |> Option.get 
+
+// let target = fileArea file
 
 let testTarget = (20L, -10L, 30L, -5L)
 let startPos: Position = 0, 0
 
-let step ((posX, posY): Position) ((veloX, veloY): Velocity) : Position * Velocity =
-    let posX = posX + veloX
-    let posY = posY + veloY
+let step ((posX, posY): Position) (velocity: Velocity) : Position * Velocity =
+    let posX = posX + velocity.Dx
+    let posY = posY + velocity.Dy
 
     let xAdjust =
-        if veloX = 0L then 0L
-        else if veloX > 0L then -1L
+        if velocity.Dx = 0L then 0L
+        else if velocity.Dx > 0L then -1L
         else 1L
 
-    let veloX = veloX + xAdjust
-    let veloY = veloY - 1L
-    (posX, posY), (veloX, veloY)
+    let veloX = velocity.Dx + xAdjust
+    let veloY = velocity.Dy - 1L
+    (posX, posY), Velocity(veloX, veloY)
 
 let isHit ((minX, minY, maxX, maxY): Area) ((x, y): Position) =
     x >= minX && x <= maxX && y >= minY && y <= maxY
@@ -70,7 +78,7 @@ let velosY ((_, minY, _, maxY): Area) (steps: int64) =
     let maxVelo = targetMaxY / steps
     (minVelo, maxVelo)
 
-let stopped ((minX, _, _, _): Area) ((x, _): Position) ((dx, _): Velocity) = dx = 0 && x < minX
+let stopped ((minX, _, _, _): Area) ((x, _): Position) (velocity: Velocity) = velocity.Dx = 0 && x < minX
 
 let rec simulate (target: Area) (pos: Position) (velocity: Velocity) : bool * Position =
     if isHit target pos then
@@ -90,54 +98,53 @@ let overShootsX ((_, _, maxX, _)) ((x, _): Position) = x > maxX
 let belowY ((_, minY, _, _)) ((_, y): Position) = y < minY
 let aboveY ((_, _, _, maxY)) ((_, y): Position) = y > maxY
 
-let rec findHighestY (target: Area) ((veloX, veloY): Velocity) : Velocity =
-    let result, _ =
-        simulate target startPos (veloX, veloY + 1L)
+let rec findHighestY (target: Area) (velocity: Velocity) : Velocity =
+    let result, _ = simulate target startPos (Velocity(velocity.Dx, velocity.Dy + 1L))
 
     if result then
-        findHighestY target (veloX, veloY + 1L)
+        findHighestY target (Velocity(velocity.Dx, velocity.Dy + 1L))
     else
-        (veloX, veloY)
+        velocity
 
-let rec find (target: Area) ((veloX, veloY): Velocity) (soFar: list<Velocity>) : bool * Velocity * List<Velocity> =
-    if overShootsX target (veloX, veloY) then
-        false, (veloX, veloY), soFar
+let rec find (target: Area) (velocity: Velocity) (soFar: list<Velocity>) : bool * Velocity * List<Velocity> =
+    if overShootsX target velocity.FirstPos then
+        false, velocity, soFar
     else
-        let result, pos = simulate target startPos (veloX, veloY)
+        let result, pos = simulate target startPos velocity
 
         if result then
-            let (_, maxVeloY) = findHighestY target (veloX, veloY)
+            let maxVelocity = findHighestY target velocity
 
             let veloRange =
-                { veloY .. maxVeloY }
-                |> Seq.map (fun y -> (veloX, y))
+                { velocity.Dy .. maxVelocity.Dy }
+                |> Seq.map (fun y -> Velocity(velocity.Dx, y))
                 |> Seq.toList
 
             let soFar = List.concat [ soFar; veloRange ]
-            find target (veloX + 1L, -10L) soFar
+            find target (Velocity(velocity.Dx + 1L, -10L)) soFar
         else if belowY target pos then
-            find target (veloX, veloY + 1L) soFar
+            find target (Velocity(velocity.Dx, velocity.Dy + 1L)) soFar
         else if underShootsX target pos then
-            find target (veloX + 1L, -10L) soFar
+            find target (Velocity(velocity.Dx + 1L, -10L)) soFar
         else
-            false, (veloX, veloY), soFar
+            false, velocity, soFar
 
-let rec maxHeight (curr: int64) (dx, dy) : int64 =
-    if dy <= 0L then
+let rec maxHeight (curr: int64) (velocity:Velocity) : int64 =
+    if velocity.Dy <= 0L then
         curr
     else
-        maxHeight (curr + dy) (dx, dy - 1L)
+        maxHeight (curr + velocity.Dy) (Velocity(velocity.Dx, velocity.Dy - 1L))
 
 let best (velos: List<Velocity>) =
     let velos =
-        velos |> List.filter (fun velo -> (snd velo > 0L))
+        velos |> List.filter (fun velo -> (velo.Dy > 0L))
 
-    let velos = (0L, 0L) :: velos
+    let velos = Velocity (0L, 0L) :: velos
     let posHeights = velos |> List.map (maxHeight 0L)
     posHeights |> List.max
 
 let solve (target: Area) =
-    let _, _, velos = find target (0L, 0L) []
+    let _, _, velos = find target (Velocity(0L, 0L)) []
     let height = best velos
     height
 
@@ -154,15 +161,15 @@ let validX ((x1, _, x2, _): Area) (dx: int64) =
 
     step 0L dx
 
-let rec findYs (target: Area) ((dx, dy): Velocity) : list<Velocity> =
+let rec findYs (target: Area) (velocity: Velocity) : list<Velocity> =
     let _, y1, _, _ = target
-    let nextPos = (dx, dy + 1L)
-    let result, pos = simulate target startPos (dx, dy)
+    let nextPos = Velocity(velocity.Dx, velocity.Dy + 1L)
+    let result, pos = simulate target startPos  velocity
 
-    if dy > (-y1) then
+    if velocity.Dy > (-y1) then
         []
     elif result then
-        (dx, dy) :: findYs target nextPos
+        velocity :: findYs target nextPos
     elif belowY target pos then
         if belowY target (fst pos, -(snd pos)) then
             []
@@ -181,7 +188,7 @@ let solve2 (target: Area) =
 
     let velos =
         dxes
-        |> List.map (fun dx -> findYs target (dx, 0L))
+        |> List.map (fun dx -> findYs target (Velocity(dx, 0L)))
         |> List.concat
 
     let best = best velos
@@ -189,7 +196,7 @@ let solve2 (target: Area) =
 
 solve2 target
 
-let underX1 ((x1, _, x2, _): Area) ((x, y): Position) ((dx, dy): Velocity) = dx = 0 && x < x1
+let underX1 ((x1, _, x2, _): Area) ((x, y): Position) (velocity: Velocity) = velocity.Dx = 0 && x < x1
 
 let rec sim2 (target: Area) (pos: Position) (velo: Velocity) =
     if isHit target pos then
@@ -207,8 +214,9 @@ let rec sim2 (target: Area) (pos: Position) (velo: Velocity) =
 let solve3 ((x1, y1, x2, y2): Area) =
     let velos =
         Seq.allPairs { 0L .. (x2 + 1L) } { (y1 - 1L) .. (-y1 + 1L) }
+        |> Seq.map Velocity 
         |> Seq.toList
-        |> List.sort
+        |> List.sortBy (fun v -> (v.Dx,v.Dy))
 
     let results =
         velos
