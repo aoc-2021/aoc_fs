@@ -223,3 +223,15 @@ let process (input:list<string>) =
 process example
 
 process (file |> Array.toList)
+
+let bestPair (input:list<string>):int64 =
+    let input = input |> List.map parseString 
+    Seq.allPairs (input |> List.toSeq) (input |> List.toSeq)
+    |> Seq.toList
+    |> List.filter (fun (a,b) -> a <> b)
+    |> List.map (fun (a,b) -> add a b)
+    |> List.map magnitude
+    |> List.max 
+
+printfn $"bestPair example= {bestPair example}" 
+printfn $"bestPair input = {bestPair (file |> Array.toList)}" 
