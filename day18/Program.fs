@@ -57,7 +57,7 @@ let explode (num:Num) : Num =
     num
 
 let rec addExplodedLeft (num:Num) (value:int64) : Num*int64 =
-    printfn $"Adding {value} to {num}"
+//    printfn $"Adding {value} to {num}"
     match num with
     | Const v -> Const (v+value),0L
     | Pair (a,b) ->
@@ -81,12 +81,12 @@ let rec applyExplode (num:Num) (depth:int) : Option<int64*int64>*Num =
     | Pair (n1,n2),depth when depth < 4 ->
         match applyExplode n1 (depth+1) with
         | Some (v1,v2),n1 ->
-            let n2,v2 = addExplodedRight n2 v2
+            let n2,v2 = addExplodedLeft n2 v2
             Some (v1,v2),Pair(n1,n2) 
         | None,n1 ->
             match applyExplode n2 (depth+1) with
             | Some (v1,v2),n2 ->
-                let n1,v1 = addExplodedLeft n1 v1
+                let n1,v1 = addExplodedRight n1 v1
                 Some (v1,v2),Pair(n1,n2)
             | None,n2 ->
                 None,Pair(n1,n2)
@@ -110,5 +110,8 @@ printfn $"test2 = {test2}"
 
 let test3 = applyExplode (parseString "[[6,[5,[4,[3,2]]]],1]") 0
 printfn $"test3 = {test3}"
+
+let test4 = applyExplode (parseString "[[3,[2,[1,[7,3]]]],[6,[5,[4,[3,2]]]]]") 0
+printfn $"test4 = {test4}"
 
 // let test1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")
