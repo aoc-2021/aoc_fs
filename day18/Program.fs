@@ -150,3 +150,9 @@ let add (num1:Num) (num2:Num) =
 
 let add1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")
 printfn $"add1 = {add1}"
+
+let fileSeed = fileNums.Head
+let fileRest = fileNums.Tail
+
+let fileRes = fileRest |> List.fold add fileSeed
+printfn $"fileRes {fileRes}"
