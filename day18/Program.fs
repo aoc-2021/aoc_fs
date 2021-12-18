@@ -92,15 +92,6 @@ let rec applyExplode (num:Num) (depth:int) : Option<int64*int64>*Num =
                 None,Pair(n1,n2)
     | _ -> failwith $"Not handled: {num} depth={depth}" 
 
-let rec reduce (num:Num) =
-   printfn $"Reducing {num}"
-   match applyExplode num 0 with
-   | Some (_),num -> reduce num
-   | None,_ -> num 
-
-let add (num1:Num) (num2:Num) =
-    let num = Pair (num1,num2)
-    reduce num 
 
 let test1 = applyExplode (parseString "[[[[[9,8],1],2],3],4]") 0
 printfn $"test1 = {test1}"
@@ -127,3 +118,26 @@ let splitNum (n:int64) =
 
 printfn $"split 10 = {splitNum 10}"
 printfn $"split 11 = {splitNum 11}"
+
+let rec singleSplit (num:Num) : bool*Num =
+    match num with
+    | Const c when c > 9 ->
+        let (c1,c2) = splitNum c
+        true, Pair(Const c1,Const c2)
+    | Const c -> false,Const c
+    | Pair(n1,n2) ->
+        match singleSplit n1 with
+        | true,n1 -> true,Pair(n1,n2)
+        | false,_ ->
+            let res,n2 = singleSplit n2
+            res,Pair(n1,n2)
+    
+let rec reduce (num:Num) =
+   printfn $"Reducing {num}"
+   match applyExplode num 0 with
+   | Some (_),num -> reduce num
+   | None,_ -> num 
+
+let add (num1:Num) (num2:Num) =
+    let num = Pair (num1,num2)
+    reduce num 
