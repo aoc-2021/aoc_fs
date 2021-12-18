@@ -56,37 +56,59 @@ let explode (num:Num) : Num =
     printfn $"explode {num}"
     num
 
-let addExploded (num:Num) (value:int64) : Num =
+let rec addExplodedLeft (num:Num) (value:int64) : Num*int64 =
     printfn $"Adding {value} to {num}"
     match num with
-    | Const n -> Const (n+value)
-    | _ -> failwith $"Not implemented: adding to tree: {num} {value}"
+    | Const v -> Const (v+value),0L
+    | Pair (a,b) ->
+        let a,value = addExplodedLeft a value
+        let b,value = addExplodedLeft b value
+        Pair (a,b),value 
 
-let rec applyExplode (num:Num) (depth:int) : bool*Num =
+let rec addExplodedRight (num:Num) (value:int64) : Num*int64 =
+    printfn $"Adding {value} to {num}"
+    match num with
+    | Const v -> Const (v+value),0L
+    | Pair (a,b) ->
+        let b,value = addExplodedRight b value
+        let a,value = addExplodedRight a value
+        Pair (a,b),value 
+
+let rec applyExplode (num:Num) (depth:int) : Option<int64*int64>*Num =
     match num,depth with
-    | Const n,_ -> false,Const n
-    | Pair (Pair (n1,Const c2),right),3 ->
-        true,(Pair(Const 0,addExploded right c2))
-    | Pair (left,Pair (Const c1,n2)),3 ->
-        true,Pair(addExploded left c1,Const 0)
-    | Pair (n1,n2),depth ->
-        let res1,n1 = applyExplode n1 (depth+1)
-        let res2,n2 = applyExplode n2 (depth+1)
-        res1||res2,Pair(n1,n2)
-        
+    | Const n,_ -> None,Const n
+    | Pair (Const c1,Const c2),4 -> Some((c1,c2)),Const 0L
+    | Pair (n1,n2),depth when depth < 4 ->
+        match applyExplode n1 (depth+1) with
+        | Some (v1,v2),n1 ->
+            let n2,v2 = addExplodedRight n2 v2
+            Some (v1,v2),Pair(n1,n2) 
+        | None,n1 ->
+            match applyExplode n2 (depth+1) with
+            | Some (v1,v2),n2 ->
+                let n1,v1 = addExplodedLeft n1 v1
+                Some (v1,v2),Pair(n1,n2)
+            | None,n2 ->
+                None,Pair(n1,n2)
+    | _ -> failwith $"Not handled: {num} depth={depth}" 
 
 let rec reduce (num:Num) =
    printfn $"Reducing {num}"
    match applyExplode num 0 with
-   | true,num -> reduce num
-   | false,_ -> num 
+   | Some (_),num -> reduce num
+   | None,_ -> num 
 
 let add (num1:Num) (num2:Num) =
     let num = Pair (num1,num2)
     reduce num 
 
 let test1 = applyExplode (parseString "[[[[[9,8],1],2],3],4]") 0
-
 printfn $"test1 = {test1}"
+
+let test2 = applyExplode (parseString "[7,[6,[5,[4,[3,2]]]]]") 0
+printfn $"test2 = {test2}"
+
+let test3 = applyExplode (parseString "[[6,[5,[4,[3,2]]]],1]") 0
+printfn $"test3 = {test3}"
 
 // let test1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")
