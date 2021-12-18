@@ -122,6 +122,7 @@ printfn $"split 11 = {splitNum 11}"
 let rec singleSplit (num:Num) : bool*Num =
     match num with
     | Const c when c > 9 ->
+        printfn $"Splitting: {num}"
         let (c1,c2) = splitNum c
         true, Pair(Const c1,Const c2)
     | Const c -> false,Const c
@@ -131,13 +132,21 @@ let rec singleSplit (num:Num) : bool*Num =
         | false,_ ->
             let res,n2 = singleSplit n2
             res,Pair(n1,n2)
+
+
     
-let rec reduce (num:Num) =
+let rec reduce (num:Num): Num =
    printfn $"Reducing {num}"
    match applyExplode num 0 with
    | Some (_),num -> reduce num
-   | None,_ -> num 
+   | None,_ ->
+       match singleSplit num with
+       | true,num -> reduce num
+       | false,num -> num 
 
 let add (num1:Num) (num2:Num) =
     let num = Pair (num1,num2)
     reduce num 
+
+let add1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")
+printfn $"add1 = {add1}"
