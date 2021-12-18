@@ -114,4 +114,16 @@ printfn $"test3 = {test3}"
 let test4 = applyExplode (parseString "[[3,[2,[1,[7,3]]]],[6,[5,[4,[3,2]]]]]") 0
 printfn $"test4 = {test4}"
 
+let test5 = applyExplode (parseString "[[3,[2,[8,0]]],[9,[5,[4,[3,2]]]]]") 0
+printfn $"test5 = {test5}"
+
 // let test1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")
+
+let splitNum (n:int64) =
+    if n % 2L = 1L then
+        ((n-1L)/2L,(n+1L)/2L)
+    else
+        (n/2L,n/2L)
+
+printfn $"split 10 = {splitNum 10}"
+printfn $"split 11 = {splitNum 11}"
