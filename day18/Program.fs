@@ -29,12 +29,6 @@ let rec tokenizeChars (num:List<char>) : list<Token> =
     | ']'::rest -> TEnd :: (tokenizeChars rest)
     | ','::rest -> TComma :: (tokenizeChars rest)
 
-let parseString (num:string) =
-    num.ToCharArray() |> Array.toList |> tokenizeChars |> reduceNums 
-
-let tokens = file |> Array.map parseString |> Array.toList 
-printfn $"tokens={tokens.Head}" 
-
 let rec parseTokens (tokens: list<Token>) : Num*list<Token> =
     match tokens with
     | TConst n :: rest -> Const n,rest
@@ -47,7 +41,24 @@ let rec parseTokens (tokens: list<Token>) : Num*list<Token> =
             failwith $"Syntax error, expected ] but was {rest}"
         Pair (first,second),rest.Tail 
 
-let parsed = tokens |> List.map parseTokens
+let parseString (num:string) : Num =
+    let tokens = num.ToCharArray() |> Array.toList |> tokenizeChars |> reduceNums
+    let num,rest = parseTokens tokens
+    num 
 
-printfn $"{parsed}" 
-    
+let fileNums = file |> Array.map parseString |> Array.toList 
+printfn $"tokens={fileNums.Head}" 
+
+
+printfn $"{fileNums}"
+
+let reduce (num:Num) =
+   printfn $"Reducing {num}"
+   1  
+
+let add (num1:Num) (num2:Num) =
+    let num = Pair (num1,num2)
+    reduce num 
+
+
+let test1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")   
