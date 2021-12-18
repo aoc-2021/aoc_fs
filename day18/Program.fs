@@ -52,13 +52,41 @@ printfn $"tokens={fileNums.Head}"
 
 printfn $"{fileNums}"
 
-let reduce (num:Num) =
+let explode (num:Num) : Num =
+    printfn $"explode {num}"
+    num
+
+let addExploded (num:Num) (value:int64) : Num =
+    printfn $"Adding {value} to {num}"
+    match num with
+    | Const n -> Const (n+value)
+    | _ -> failwith $"Not implemented: adding to tree: {num} {value}"
+
+let rec applyExplode (num:Num) (depth:int) : bool*Num =
+    match num,depth with
+    | Const n,_ -> false,Const n
+    | Pair (Pair (n1,Const c2),right),3 ->
+        true,(Pair(Const 0,addExploded right c2))
+    | Pair (left,Pair (Const c1,n2)),3 ->
+        true,Pair(addExploded left c1,Const 0)
+    | Pair (n1,n2),depth ->
+        let res1,n1 = applyExplode n1 (depth+1)
+        let res2,n2 = applyExplode n2 (depth+1)
+        res1||res2,Pair(n1,n2)
+        
+
+let rec reduce (num:Num) =
    printfn $"Reducing {num}"
-   1  
+   match applyExplode num 0 with
+   | true,num -> reduce num
+   | false,_ -> num 
 
 let add (num1:Num) (num2:Num) =
     let num = Pair (num1,num2)
     reduce num 
 
+let test1 = applyExplode (parseString "[[[[[9,8],1],2],3],4]") 0
 
-let test1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")   
+printfn $"test1 = {test1}"
+
+// let test1 = add (parseString "[[[[4,3],4],4],[7,[[8,4],9]]]") (parseString "[1,1]")
