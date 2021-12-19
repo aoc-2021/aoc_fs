@@ -3,6 +3,9 @@ open System.IO
 let file =
     File.ReadAllLines "input.txt" |> Array.toList
 
+let testFile =
+    File.ReadAllLines "testInput.txt" |> Array.toList
+
 type Pos = int * int * int
 type Scan = List<Pos>
 
@@ -54,8 +57,8 @@ let parse (input: list<string>) =
             | PScanner scanner -> scanner
             | beacon -> failwith $"beacon after parse {beacon}")
 
-let parsed = parse file
-printfn $"parsed: {parsed}"
+let inputScanners = parse file
+printfn $"parsed: {inputScanners}"
 
 let allRotations (x, y, z) : list<Pos> =
     let xyrots (x, y, z) =
@@ -116,23 +119,83 @@ let rotations ((x, y, z): Pos) =
       (z, x, y)
       (z, y, -x) ]
 
-type PotentialScanners(scanners:List<Scanner>) =
+type PotentialScanners(scanners: List<Scanner>) =
     member this.Scanners = scanners
     override this.ToString() = $"PotentialScanners({scanners})"
-    
-let toPotential (scanner:Scanner) : PotentialScanners =
+
+let toPotential (scanner: Scanner) : PotentialScanners =
     let posRots = scanner.Scan |> List.map rotations
-    let rec toScans (posRots:list<list<Pos>>) : list<Scanner> =
+
+    let rec toScans (posRots: list<list<Pos>>) : list<Scanner> =
         match posRots with
         | empties when empties.Head.IsEmpty -> []
         | lists ->
-            let first = lists |> List.map List.head |> (fun beacons -> Scanner (scanner.Id,beacons))
+            let first =
+                lists
+                |> List.map List.head
+                |> (fun beacons -> Scanner(scanner.Id, beacons))
+
             let rest = lists |> List.map List.tail |> toScans
-            first::rest
+            first :: rest
+
     PotentialScanners(toScans posRots)
-            
-let tScan1 = Scanner(1,[(1,2,3);(2,4,6)])        
+
+let tScan1 = Scanner(1, [ (1, 2, 3); (2, 4, 6) ])
 let pScan1 = toPotential tScan1
 
 printfn $"pScan1 = {pScan1}"
-    
+
+let testScanners: list<Scanner> = parse testFile
+
+let tryMatchSingle (scanner: Scanner) (other: Scanner) : list<Pos> =
+    let offsets =
+        Seq.allPairs (scanner.Scan |> List.toSeq) (other.Scan |> List.toSeq)
+        |> Seq.map (fun ((x1, y1, z1), (x2, y2, z2)) -> (x2 - x1, y2 - y1, z2 - z1))
+        |> Seq.groupBy id
+        |> Seq.map (fun (pos, posr) -> (pos, posr |> Seq.length))
+        |> Seq.filter (fun (offset, count) -> count > 11)
+        |> Seq.map fst
+        |> Seq.toList
+    // printfn $"offsets {offsets}"
+    offsets
+
+// returns a list of matching scanners and the offset. If multiple offsets works, they're all returned
+let tryMatchWithPots (scanner: Scanner) (pots: PotentialScanners) : list<(Scanner * Pos)> =
+    pots.Scanners
+    |> List.map
+        (fun other ->
+            let offsets: list<Pos> = tryMatchSingle scanner other
+            offsets |> List.map (fun offset -> other, offset))
+    |> List.concat
+
+let merge (scanner: Scanner) (potentials: PotentialScanners) = 1
+
+let single1 =
+    tryMatchSingle testScanners.Head testScanners.Tail.Head
+
+let matches1 =
+    tryMatchWithPots testScanners.Head (toPotential (testScanners.Tail.Head))
+
+printfn $"matches1 = {matches1}"
+
+let mergeSingle (scanner1: Scanner) (scanner2: Scanner) ((dx, dy, dz): Pos) =
+    let addOffSet (x, y, z) = (x + dx, y + dy, z + dz)
+    let beacons1 = scanner1.Scan
+    let beacons2 = scanner2.Scan |> List.map addOffSet
+
+    let beacons =
+        List.concat [ beacons1; beacons2 ]
+        |> List.distinct
+        |> List.sort
+
+    Scanner(scanner1.Id, beacons)
+
+type Candidate(scanner: Scanner, potentials: PotentialScanners) =
+    member this.Scanner = scanner
+    member this.Potentials = potentials
+
+let toCandidate (scanner: Scanner) = Candidate(scanner, toPotential scanner)
+let testCandidates = testScanners |> List.map toCandidate
+let fileCandidates = inputScanners |> List.map toCandidate
+
+let mergeFirst (candidates: list<Candidate>) = 1
