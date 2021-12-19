@@ -115,3 +115,24 @@ let rotations ((x, y, z): Pos) =
       (z, -x, -y)
       (z, x, y)
       (z, y, -x) ]
+
+type PotentialScanners(scanners:List<Scanner>) =
+    member this.Scanners = scanners
+    override this.ToString() = $"PotentialScanners({scanners})"
+    
+let toPotential (scanner:Scanner) : PotentialScanners =
+    let posRots = scanner.Scan |> List.map rotations
+    let rec toScans (posRots:list<list<Pos>>) : list<Scanner> =
+        match posRots with
+        | empties when empties.Head.IsEmpty -> []
+        | lists ->
+            let first = lists |> List.map List.head |> (fun beacons -> Scanner (scanner.Id,beacons))
+            let rest = lists |> List.map List.tail |> toScans
+            first::rest
+    PotentialScanners(toScans posRots)
+            
+let tScan1 = Scanner(1,[(1,2,3);(2,4,6)])        
+let pScan1 = toPotential tScan1
+
+printfn $"pScan1 = {pScan1}"
+    
