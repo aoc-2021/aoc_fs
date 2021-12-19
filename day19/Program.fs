@@ -21,7 +21,6 @@ let rec tokenize (input: list<string>) =
        let scanner = (scanner.Split ' ').[2] |> int
        TScanner(scanner) :: tokenize rest
    | beacon :: rest ->
-       printfn $"beacon {beacon}"
        let xyz = beacon.Split ',' |> Array.map int
        let pos = Pos(xyz.[0],xyz.[1],xyz.[2])
        (TBeacon pos) :: tokenize rest 
@@ -56,5 +55,18 @@ let parse (input:list<string>) =
 let parsed = parse file
 printfn $"parsed: {parsed}"
             
-        
+let allRotations (x,y,z) : list<Pos> =
+    let xyrots (x,y,z) = [(x,y,z);(-y,x,z);(-x,-y,z);(y,-x,z)]
+    let yzrots (x,y,z) = [(x,y,z);(x,-z,y);(x,-y,-z);(x,z,-y)]
+    let xzrots (x,y,z) = [(x,y,z);(-z,y,x);(-x,y,-z);(z,y,-x)]
+    (x,y,z) |> xyrots |> List.map yzrots |> List.concat |> List.map xzrots |> List.concat 
+    
+let allRot1 = allRotations (1,2,3)
+let dRot1 = allRot1 |> List.sort |> List.distinct
+
+printfn $"allRot1 {allRot1} {allRot1.Length} {dRot1} {dRot1.Length}"
+    
+
+
+
     
