@@ -247,4 +247,55 @@ printfn $"testM {testM.Head.Scanner.Scan |> List.length}"
 let prodM = mergeList fileCandidates
 printfn $"prodM {prodM.Head.Scanner.Scan |> List.length}"
 
+let pDist (x:int) (y:int) =
+    if x > 0 && y > 0 then
+        (max x y) - (min x y)
+    else if x < 0 && y < 0 then
+        let x = abs x 
+        let y = abs y
+        (max x y) - (min x y)
+    else
+        (abs x) + (abs y)
+        
+
+let distance ((x1,y1,z1):Pos) ((x2,y2,z2):Pos) =
+    let dist = (pDist x1 x2) + (pDist y1 y2) + (pDist z1 z2)
+    if (dist = 7831) then
+        printfn $"DIST {(x1,y1,z1)} {(x2,y2,z2)} = {dist}"
+    dist 
     
+let maxDistance (positions: List<Pos>) =
+    let toDistance (p1,p2) = distance p1 p2 
+    Seq.allPairs (positions |> List.toSeq) (positions |> List.toSeq)
+    |> Seq.map toDistance
+    |> Seq.max
+    
+let testMax = maxDistance testM.Head.Scanner.Scan
+
+printfn $"testMax = {testMax}"
+// let prodMax = maxDistance prodM.Head.Scanner.Scan
+
+// printfn $"prodMax = {prodMax}"
+
+printfn "Beacons: "
+// testM.Head.Scanner.Scan |> List.sort |> List.map (fun b -> printfn $"{b}")
+
+let testScan0 = testM.Head.Scanner
+let prodScan0 = prodM.Head.Scanner
+
+let testPots = testCandidates |> List.map (fun c -> c.Potentials)
+let prodPots = fileCandidates |> List.map (fun c -> c.Potentials)
+
+let scansAbs (start:Scanner) (pots) =
+    pots
+    |> List.map (fun pot -> tryMatchWithPots start pot)
+    |> List.map List.head
+    |> List.map snd
+
+let testScansAbs = scansAbs testScan0 testPots
+let prodScansAbs = scansAbs prodScan0 prodPots 
+
+let testMaxDist = maxDistance testScansAbs
+let prodMaxDist = maxDistance prodScansAbs 
+printfn $"testMax = {testMaxDist}"
+printfn $"prodMax = {prodMaxDist}"
