@@ -89,9 +89,9 @@ let allRotations (x, y, z) : list<Pos> =
 let allRot1 = allRotations (1, 2, 3)
 let dRot1 = allRot1 |> List.sort |> List.distinct
 
-printfn $"allRot1 {allRot1} {allRot1.Length} {dRot1} {dRot1.Length}"
+// printfn $"allRot1 {allRot1} {allRot1.Length} {dRot1} {dRot1.Length}"
 
-dRot1 |> List.map (fun p -> printfn $"{p}")
+// dRot1 |> List.map (fun p -> printfn $"{p}")
 
 let rotations ((x, y, z): Pos) =
     [ (-z, -y, -x)
@@ -179,7 +179,7 @@ let matches1 =
 printfn $"matches1 = {matches1}"
 
 let mergeSingle (scanner1: Scanner) (scanner2: Scanner) ((dx, dy, dz): Pos) =
-    let addOffSet (x, y, z) = (x + dx, y + dy, z + dz)
+    let addOffSet (x, y, z) = (x - dx, y - dy, z - dz)
     let beacons1 = scanner1.Scan
     let beacons2 = scanner2.Scan |> List.map addOffSet
 
@@ -198,4 +198,53 @@ let toCandidate (scanner: Scanner) = Candidate(scanner, toPotential scanner)
 let testCandidates = testScanners |> List.map toCandidate
 let fileCandidates = inputScanners |> List.map toCandidate
 
-let mergeFirst (candidates: list<Candidate>) = 1
+// try to merge a candidate with each of the candidates, return a list of the merged
+// result and a list of unmatched. Assumes 12 matches = win 
+let rec mergeWithList (first:Candidate) (candidates: list<Candidate>) : Candidate*List<Candidate> =
+    match candidates with
+    | [] -> first, []
+    | candidate::rest ->
+        let matches:List<Scanner*Pos> = tryMatchWithPots first.Scanner candidate.Potentials
+        if matches.Length > 1 then failwith "Not supported: multiple hits"
+        if matches.IsEmpty then
+            let first,rest = mergeWithList first rest
+            first,candidate::rest
+        else
+            let (hit,offset) = matches.Head
+            let first = mergeSingle first.Scanner hit offset
+            let first = toCandidate first 
+            mergeWithList first rest
+
+let mergeRes = mergeWithList testCandidates.Head testCandidates.Tail
+
+printfn $"mergeRes = {mergeRes} {(snd mergeRes |> List.length)} {(testCandidates.Tail |> List.length)}"
+
+printfn $"size: {(fst mergeRes).Scanner.Scan |> List.distinct |> List.length}"
+         
+let mergeRes2 = mergeWithList (fst mergeRes) (snd mergeRes)
+
+printfn $"mergeRes2 = {mergeRes2} {(snd mergeRes2 |> List.length)} {(testCandidates.Tail |> List.length)}"
+printfn $"size: {(fst mergeRes2).Scanner.Scan |> List.distinct |> List.length}"
+
+
+let prodMergeRes = mergeWithList fileCandidates.Head fileCandidates.Tail
+
+printfn $"prodMergeRes = {prodMergeRes} {(snd prodMergeRes |> List.length)} {(fileCandidates.Tail |> List.length)}"
+printfn $"size: {(fst prodMergeRes).Scanner.Scan |> List.distinct |> List.length}"
+
+let rec mergeList (candidates:list<Candidate>) =
+    match candidates with
+    | [] -> []
+    | first::rest ->
+        let rest = mergeList rest 
+        let first,rest = mergeWithList first rest
+        first::rest
+        
+let testM = mergeList testCandidates
+
+printfn $"testM {testM.Head.Scanner.Scan |> List.length}"
+        
+let prodM = mergeList fileCandidates
+printfn $"prodM {prodM.Head.Scanner.Scan |> List.length}"
+
+    
