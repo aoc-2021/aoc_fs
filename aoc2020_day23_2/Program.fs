@@ -20,14 +20,14 @@ let rec shrinkTillFree (ring: Ring) (cup: Cup) (taken: list<Cup>) =
     else
         cup
 
-let crabTurn (ring: Ring) =
+let crabTurn (ring: Ring) : Ring =
     let takenCups, ring = ring.TakeThe3Cups()
     let destinationCup = nextDown ring (ring.Head())
 
     let destinationCup =
         shrinkTillFree ring destinationCup takenCups
 
-    let ring =
+    let ring : Ring  =
         ring.insertAfter destinationCup takenCups
 
     ring.Step()
