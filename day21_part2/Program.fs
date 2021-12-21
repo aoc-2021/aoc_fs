@@ -5,7 +5,7 @@ type PlayerState(p1Pos:int64,score1:int64,p2Pos:int64,score2:int64) =
     member this.Score2 = score2
     member this.Leader = if score1 > score2 then 1 else 2 
     override this.ToString () = $"PlayerState(player1@{p1Pos}={score1},player2@{p2Pos}={score2})"
-    member this.IsWin = score1 > 20 || score2 > 20 
+    member this.IsWin = score1 > 20L || score2 > 20L 
 
 let prodPlayers = PlayerState (9L,0L,6L,0L)
 let testPlayers = PlayerState (4L,0L,8L,0L)
@@ -42,6 +42,8 @@ type State(players:PlayerState,pathCount:int64,turn:int64) =
 
 type States(states:list<State>,winsFor1:int64,winsFor2:int64) =
     member this.States = states
+    member this.WinsFor1 = winsFor1
+    member this.WinsFor2 = winsFor2 
     override this.ToString () = $"States([wins1:{winsFor1} wins2:{winsFor2} #={states.Length} {states})"
     
     member this.Merge () =
@@ -66,7 +68,8 @@ type States(states:list<State>,winsFor1:int64,winsFor2:int64) =
         let winners2 : int64 = winners
                                |> List.filter isWinner2
                                |> List.map (fun state -> state.Paths)
-                               |> List.sum 
+                               |> List.sum
+        printfn $"## winners1={winners1} winners2={winners2}"
 
         let winsFor1 = winsFor1 + winners1
         let winsFor2 = winsFor2 + winners2
@@ -82,7 +85,7 @@ let playRound (state:State) =
         distRolls |> List.map (fun (roll,paths) ->
             let pos = board.StepsFrom pos roll
             let score = score + pos 
-            let paths = state.Paths + paths
+            let paths = state.Paths * paths
             let players = PlayerState(pos,score,state.Players.Player2,state.Players.Score2)
             State(players,paths,2))
     else
@@ -91,21 +94,21 @@ let playRound (state:State) =
         distRolls |> List.map (fun (roll,paths) ->
             let pos = board.StepsFrom pos roll
             let score = score + pos 
-            let paths = state.Paths + paths
+            let paths = state.Paths * paths
             let players = PlayerState(state.Players.Player1,state.Players.Score1,pos,score)
             State(players,paths,1))
 
-let playRounds (states:States) =
+let playRounds (states:States) : States =
     let newStates = states.States |> List.map playRound |> List.concat 
     printfn $"newStates = {newStates}"
-    let states = States(newStates,0L,0L)
+    let states = States(newStates,states.WinsFor1,states.WinsFor2)
     let states = states.Merge ()
-    let states = states.ExtractWinners ()
-    states 
-        
-let initPlayers = testPlayers 
+    let states : States = states.ExtractWinners ()
+    states
+    
+let initPlayers = prodPlayers 
 
-let initState = State(testPlayers,1L,1)
+let initState = State(initPlayers,1L,1)
 // let rolls1 = playRound initState 
 
 let initStates: States = States([initState],0L,0L)
@@ -122,5 +125,17 @@ let states7 = playRounds states6
 printfn $"states(7) = {states7}"
 
 // printfn $"{rolls1}"
+
+printfn "##### Playing out"
     
-    
+let rec playOut (states:States) =
+    if states.States.Length > 0 then
+        let states = playRounds states
+        playOut states
+    else
+        printfn $"endState: {states}"
+        
+playOut initStates
+
+492043106122795
+267086464416104
