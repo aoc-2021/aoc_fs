@@ -4,7 +4,7 @@ type PlayerState(p1Pos:int64,score1:int64,p2Pos:int64,score2:int64) =
     member this.Score1 = score1
     member this.Score2 = score2
     member this.Leader = if score1 > score2 then 1 else 2 
-    override this.ToString () = $"PlayerState(player1@{p1Pos},player2@{p2Pos})"
+    override this.ToString () = $"PlayerState(player1@{p1Pos}={score1},player2@{p2Pos}={score2})"
     member this.IsWin = score1 > 20 || score2 > 20 
 
 let prodPlayers = PlayerState (9L,0L,6L,0L)
@@ -42,7 +42,7 @@ type State(players:PlayerState,pathCount:int64,turn:int64) =
 
 type States(states:list<State>,winsFor1:int64,winsFor2:int64) =
     member this.States = states
-    override this.ToString () = $"States(#={states.Length} {states})"
+    override this.ToString () = $"States([wins1:{winsFor1} wins2:{winsFor2} #={states.Length} {states})"
     
     member this.Merge () =
         let grouped = states |> List.groupBy (fun s -> s.MergeKey)
@@ -56,7 +56,24 @@ type States(states:list<State>,winsFor1:int64,winsFor2:int64) =
         States(grouped,winsFor1,winsFor2)
         
     member this.ExtractWinners () =
-        States(states,winsFor1,winsFor2)
+        let isWinner1 (state:State) = state.Players.Leader = 1
+        let isWinner2 (state:State) = state.Players.Leader = 2
+        let winners : list<State> = states |> List.filter (fun (state) -> state.Players.IsWin)
+        let winners1 : int64 = winners
+                               |> List.filter isWinner1
+                               |> List.map (fun state -> state.Paths)
+                               |> List.sum
+        let winners2 : int64 = winners
+                               |> List.filter isWinner2
+                               |> List.map (fun state -> state.Paths)
+                               |> List.sum 
+
+        let winsFor1 = winsFor1 + winners1
+        let winsFor2 = winsFor2 + winners2
+        
+        let undecided = states |> List.filter (fun (state) -> state.Players.IsWin |> not)
+        printfn $"winners: {winners} undecided = {undecided}"
+        States(undecided,winsFor1,winsFor2)
     
 let playRound (state:State) =
     if state.Turn = 1 then 
@@ -102,7 +119,7 @@ let states5 = playRounds states4
 let states6 = playRounds states5 
 let states7 = playRounds states6 
 
-printfn $"states(4) = {states4}"
+printfn $"states(7) = {states7}"
 
 // printfn $"{rolls1}"
     
