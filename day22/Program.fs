@@ -54,9 +54,70 @@ type Cuboid(minPos:Point,maxPos:Point) =
     member this.allPos () : list<Point> =
         Seq.allPairs (Seq.allPairs {x1..x2} {y1..y2}) {z1..z2}
         |> Seq.map (fun ((x,y),z) -> (x,y,z))
-        |> Seq.toList 
+        |> Seq.toList
+    member this.IntersectsWith (other:Cuboid) =
+        let (ox1,oy1,oz1) = other.MinPos
+        let (ox2,oy2,oz2) = other.MaxPos
+        (ox1 > x2 || ox2 < x1 ||
+         oy1 > y2 || oy2 < y1 ||
+         oz1 > z2 || oz2 < z1) 
         
-
+    member this.IntersectOnCuboid (other:Cuboid) : Option<Cuboid>*List<Cuboid> =
+        let (ox1,oy1,oz1) = other.MinPos
+        let (ox2,oy2,oz2) = other.MaxPos
+        if this.IntersectsWith other then
+            let cx1 = max x1 ox1
+            let cx2 = min x2 ox2
+            let cy1 = max y1 oy1
+            let cy2 = min y2 oy2
+            let cz1 = max z1 oz1
+            let cz2 = min z2 oz2
+            let inter = Cuboid((cx1,cy1,cz1),(cx2,cy2,cz2))
+            let hasLeft = x1 < ox1
+            let hasRight = x2 > ox2
+            let hasBottom = y1 < oy1
+            let hasTop = y2 > oy2
+            let hasFront = z1 < oz1
+            let hasBack = z2 > oz2
+            let rest : list<Cuboid> = []
+            let rest =
+                if hasTop then
+                    let top = Cuboid((x1,oy2,z1),(x2,y2,z2))
+                    top :: rest 
+                else rest
+            let rest =
+                if hasBottom then
+                    let bottom = Cuboid((x1,y1,z1),(x2,oy1,z2))
+                    bottom :: rest
+                else rest
+            let y1 = max y1 oy1 // raising the floor
+            let y2 = min y2 oy2 // lowering the ceiling
+            let rest =
+                if hasLeft then
+                    let left = Cuboid((x1,y1,z1),(ox1,y2,z2))
+                    left :: rest
+                else rest
+            let rest =
+                if hasRight then
+                    let right = Cuboid((ox2,y1,z1),(x2,y2,z2))
+                    right :: rest
+                else rest
+            let x1 = max x1 ox1 // cutting off left 
+            let x2 = min x2 ox2 // cutting off right
+            let rest =
+                if hasFront then
+                    let front = Cuboid((x1,y1,z1),(x2,y2,oz1))
+                    front :: rest
+                else rest
+            let rest =
+                if hasBack then
+                    let back = Cuboid((x1,y1,oz2),(x2,y2,z2))
+                    back :: rest
+                else rest
+            Some(inter),rest  
+        else
+            None,[this]
+        
 type CubeState = ON | OFF 
 
 let toCubeState (s:string) =
@@ -141,3 +202,12 @@ let finalState50 = commands50 |> List.fold applyState stateMap50
 let finalOns50 = finalState50 |> Map.filter (fun key value -> value = ON) |> Map.keys 
 
 printfn $"finalOns50: {finalOns50 |> Seq.length}"
+
+// part 2
+
+
+
+
+
+
+
