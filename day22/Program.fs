@@ -60,7 +60,15 @@ type Cuboid(minPos:Point,maxPos:Point) =
         let (ox2,oy2,oz2) = other.MaxPos
         (ox1 > x2 || ox2 < x1 ||
          oy1 > y2 || oy2 < y1 ||
-         oz1 > z2 || oz2 < z1) 
+         oz1 > z2 || oz2 < z1)
+        |> not 
+    member this.Volume () : int64  =
+        let (x1,y1,z1) = minPos
+        let (x2,y2,z2) = maxPos
+        let dx = x2-x1+1L
+        let dy = y2-y1+1L
+        let dz = z2-z1+1L 
+        dx*dy*dz 
         
     member this.IntersectOnCuboid (other:Cuboid) : Option<Cuboid>*List<Cuboid> =
         let (ox1,oy1,oz1) = other.MinPos
@@ -82,36 +90,36 @@ type Cuboid(minPos:Point,maxPos:Point) =
             let rest : list<Cuboid> = []
             let rest =
                 if hasTop then
-                    let top = Cuboid((x1,oy2,z1),(x2,y2,z2))
+                    let top = Cuboid((x1,oy2+1L,z1),(x2,y2,z2))
                     top :: rest 
                 else rest
             let rest =
                 if hasBottom then
-                    let bottom = Cuboid((x1,y1,z1),(x2,oy1,z2))
+                    let bottom = Cuboid((x1,y1,z1),(x2,oy1-1L,z2))
                     bottom :: rest
                 else rest
             let y1 = max y1 oy1 // raising the floor
             let y2 = min y2 oy2 // lowering the ceiling
             let rest =
                 if hasLeft then
-                    let left = Cuboid((x1,y1,z1),(ox1,y2,z2))
+                    let left = Cuboid((x1,y1,z1),(ox1-1L,y2,z2))
                     left :: rest
                 else rest
             let rest =
                 if hasRight then
-                    let right = Cuboid((ox2,y1,z1),(x2,y2,z2))
+                    let right = Cuboid((ox2+1L,y1,z1),(x2,y2,z2))
                     right :: rest
                 else rest
             let x1 = max x1 ox1 // cutting off left 
             let x2 = min x2 ox2 // cutting off right
             let rest =
                 if hasFront then
-                    let front = Cuboid((x1,y1,z1),(x2,y2,oz1))
+                    let front = Cuboid((x1,y1,z1),(x2,y2,oz1-1L))
                     front :: rest
                 else rest
             let rest =
                 if hasBack then
-                    let back = Cuboid((x1,y1,oz2),(x2,y2,z2))
+                    let back = Cuboid((x1,y1,oz2+1L),(x2,y2,z2))
                     back :: rest
                 else rest
             Some(inter),rest  
@@ -157,8 +165,7 @@ let testCommands1 = testFile1 |> Array.map toCuboid |> Array.toList
 let testCommands2 = testFile2 |> Array.map toCuboid |> Array.toList
 
 // let commands = testCommands1
-let commands = prodCommands
-
+let commands = testCommands1
 
 // Naive solution
 
@@ -182,21 +189,6 @@ let applyState (states:Map<Point,CubeState>) (command:Command) : Map<Point,CubeS
         states.Add pointState
     command.ToPointStates ()
     |> List.fold addPos states 
-    
-let state1 = applyState stateMap50 c1
-let state2 = applyState state1 commands50.Tail.Head 
-let state3 = applyState state2 commands50.Tail.Tail.Head 
-let toggled1 = state1 |> Map.filter (fun key value -> value = ON)
-let toggled2 = state2 |> Map.filter (fun key value -> value = ON)
-let toggled3 = state3 |> Map.filter (fun key value -> value = ON)
-
-printfn 
-printfn $"c1={c1}"
-toggled1.Keys |> Seq.map (fun p -> printfn $"{p}") |> Seq.toList 
-
-printfn $"toggled1 = {toggled1.Count}"
-printfn $"toggled2 = {toggled2.Count}"
-printfn $"toggled3 = {toggled3.Count}"
 
 let finalState50 = commands50 |> List.fold applyState stateMap50
 let finalOns50 = finalState50 |> Map.filter (fun key value -> value = ON) |> Map.keys 
@@ -205,9 +197,87 @@ printfn $"finalOns50: {finalOns50 |> Seq.length}"
 
 // part 2
 
+let testCuboidLarge = Cuboid ((0,0,0),(5,6,7))
+let testCuboidSmall = Cuboid ((1,2,3),(4,5,6))
+
+let intSelf = testCuboidLarge.IntersectsWith testCuboidLarge
+let intSmall = testCuboidLarge.IntersectsWith testCuboidSmall
+
+printfn $"int self={intSelf} small={intSmall}"
 
 
 
+printfn ""
+printfn ""
+printfn ""
 
+let testFull1 = testCuboidLarge.IntersectOnCuboid testCuboidLarge // 1:1 match
+printfn $"testFull1 = {testFull1}"
+let testSplit1 = testCuboidLarge.IntersectOnCuboid testCuboidSmall
+printf $"testSplit1 = {testSplit1}"
 
+printfn ""
+printfn ""
+printfn ""
+printfn ""
+
+let (c,r) = testSplit1
+let ov1 = c |> Option.get
+let v1 = ov1.Volume ()
+let v2 = r |> List.map (fun c -> c.Volume ()) |> List.sum 
+
+let splitVolume = v1 + v2
+let origVolume = testCuboidLarge.Volume () 
+
+printfn $"volume {origVolume} -> {splitVolume}"
+
+let findHugeCube (commands:list<Command>) =
+    let mins = commands |> List.map (fun com -> com.Cube.MinPos)
+    let maxs = commands |> List.map (fun com -> com.Cube.MaxPos)
+    let toX ((x,y,z):Point) = x
+    let toY ((x,y,z):Point) = y
+    let toZ ((x,y,z):Point) = z
+    let minX = mins |> List.map toX |> List.min
+    let minY = mins |> List.map toY |> List.min
+    let minZ = mins |> List.map toZ |> List.min
+    let maxX = maxs |> List.map toX |> List.max
+    let maxY = maxs |> List.map toY |> List.max
+    let maxZ = maxs |> List.map toZ |> List.max
+    Cuboid ((minX,minY,minZ),(maxX,maxY,maxZ))
+
+let startCuboids:list<Cuboid*CubeState> = [findHugeCube commands,OFF]
+
+let applyCommandSingle ((cuboid,state):Cuboid*CubeState) (command:Command):List<Cuboid*CubeState> =
+    if state = command.Toggle then [(cuboid,state)] // no point in toggling to same 
+    else
+        match command.Cube.IntersectOnCuboid cuboid with
+        | None,_ -> [(cuboid,state)] 
+        | Some(inter),rest ->
+            let (_,outside) = cuboid.IntersectOnCuboid command.Cube 
+            let outside = outside |> List.map (fun o -> o,state) 
+            printfn $"applyCommand: split into {inter} {rest}"
+            let rest = rest |> List.map (fun c -> c,state) // rest keeps the state
+            [(inter,command.Toggle) :: rest ; outside] |> List.concat 
+         
+let applyCommand (cubestates:list<Cuboid*CubeState>) (command:Command) =
+    cubestates |> List.map (fun cs -> applyCommandSingle cs command) |> List.concat
+    
+let cubes1 = applyCommand startCuboids commands.Head
+
+let endCubes = commands |> List.fold applyCommand startCuboids 
+
+printfn $"start={startCuboids}" 
+printfn $"cubes1={cubes1}"
+printfn $"endCubes={endCubes}"
+let ons = endCubes |> List.filter (fun (_,state) -> state = ON) |> List.map fst
+
+endCubes |> List.map (fun c -> printfn $"*cube: {c}")
+
+printfn $"ons = {ons}"
+
+printfn $"Volume (1,1,1)(1,1,1) = {Cuboid((1,1,1),(3,3,3)).Volume ()}"
+
+let lit = ons |> List.map (fun on -> on.Volume ()) |> List.sum
+
+printfn $"lit={lit}"
 
