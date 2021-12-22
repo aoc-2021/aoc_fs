@@ -3,6 +3,7 @@ open System.IO
 let file = File.ReadAllLines "input.txt"
 let testFile1 = File.ReadAllLines "testInput1.txt"
 let testFile2 = File.ReadAllLines "testInput2.txt"
+let testFile3 = File.ReadAllLines "testInput3.txt"
 
 let splitCoord (line:string) =
     let p1 = line.Split '='
@@ -163,9 +164,10 @@ let prodCommands = file |> Array.map toCuboid |> Array.toList
 let testCommands1 = testFile1 |> Array.map toCuboid |> Array.toList
 
 let testCommands2 = testFile2 |> Array.map toCuboid |> Array.toList
+let testCommands3 = testFile3 |> Array.map toCuboid |> Array.toList
 
 // let commands = testCommands1
-let commands = testCommands1
+let commands = prodCommands
 
 // Naive solution
 
@@ -216,15 +218,22 @@ printfn $"testFull1 = {testFull1}"
 let testSplit1 = testCuboidLarge.IntersectOnCuboid testCuboidSmall
 printf $"testSplit1 = {testSplit1}"
 
+let testSplit2 = testCuboidSmall.IntersectOnCuboid testCuboidLarge 
+
 printfn ""
 printfn ""
 printfn ""
 printfn ""
 
 let (c,r) = testSplit1
+let (c2,r2) = testSplit2 
 let ov1 = c |> Option.get
 let v1 = ov1.Volume ()
-let v2 = r |> List.map (fun c -> c.Volume ()) |> List.sum 
+let v2 = r |> List.map (fun c -> c.Volume ()) |> List.sum
+
+let vx = (c2 |> Option.get).Volume () + (r2 |> List.map (fun r -> r.Volume ()) |> List.sum)
+
+printfn $"###vx={vx}"
 
 let splitVolume = v1 + v2
 let origVolume = testCuboidLarge.Volume () 
@@ -234,9 +243,9 @@ printfn $"volume {origVolume} -> {splitVolume}"
 let findHugeCube (commands:list<Command>) =
     let mins = commands |> List.map (fun com -> com.Cube.MinPos)
     let maxs = commands |> List.map (fun com -> com.Cube.MaxPos)
-    let toX ((x,y,z):Point) = x
-    let toY ((x,y,z):Point) = y
-    let toZ ((x,y,z):Point) = z
+    let toX ((x,_,_):Point) = x
+    let toY ((_,y,_):Point) = y
+    let toZ ((_,_,z):Point) = z
     let minX = mins |> List.map toX |> List.min
     let minY = mins |> List.map toY |> List.min
     let minZ = mins |> List.map toZ |> List.min
@@ -250,24 +259,71 @@ let startCuboids:list<Cuboid*CubeState> = [findHugeCube commands,OFF]
 let applyCommandSingle ((cuboid,state):Cuboid*CubeState) (command:Command):List<Cuboid*CubeState> =
     if state = command.Toggle then [(cuboid,state)] // no point in toggling to same 
     else
-        match command.Cube.IntersectOnCuboid cuboid with
+        match cuboid.IntersectOnCuboid command.Cube with
         | None,_ -> [(cuboid,state)] 
         | Some(inter),rest ->
-            let (_,outside) = cuboid.IntersectOnCuboid command.Cube 
-            let outside = outside |> List.map (fun o -> o,state) 
             printfn $"applyCommand: split into {inter} {rest}"
             let rest = rest |> List.map (fun c -> c,state) // rest keeps the state
-            [(inter,command.Toggle) :: rest ; outside] |> List.concat 
+            (inter,command.Toggle) :: rest
          
 let applyCommand (cubestates:list<Cuboid*CubeState>) (command:Command) =
     cubestates |> List.map (fun cs -> applyCommandSingle cs command) |> List.concat
     
 let cubes1 = applyCommand startCuboids commands.Head
+let cubes2 = applyCommand cubes1 commands.Tail.Head 
+let cubes3 = applyCommand cubes2 commands.Tail.Head 
+
+let rec findIntersects (l:list<Cuboid*CubeState>) =
+    match l with
+    | [] -> []
+    | first::rest ->
+        let cube:Cuboid = fst first 
+        let intersections = rest
+                            |> List.filter (fun c -> cube.IntersectsWith (fst c))
+                            |> List.map (fun i -> first,i)
+        let others = findIntersects rest
+        [intersections;others] |> List.concat 
+                        
+let rec sumVolume (l:list<Cuboid*CubeState>) =
+    l |> List.map fst |> List.map (fun c -> c.Volume ()) |> List.sum 
 
 let endCubes = commands |> List.fold applyCommand startCuboids 
 
+let countLit (l:list<Cuboid*CubeState>) =
+    l |> List.filter (fun x -> snd x = ON)
+      |> List.map fst
+      |> List.map (fun c -> c.Volume ())
+      |> List.sum 
+
 printfn $"start={startCuboids}" 
 printfn $"cubes1={cubes1}"
+
+printfn $"INitvolume = {sumVolume startCuboids}"
+
+let lit1 = countLit cubes1
+printfn $"LIT 1 = {lit1}"
+printfn $"volume = {sumVolume cubes1}"
+printfn $"intersects = {findIntersects cubes1}"
+cubes1 |> List.map (fun c1 -> printfn $"*** Cuboid : {c1}")
+
+printfn "#### ROUND 2 ###"
+
+let lit2 = countLit cubes2
+printfn $"LIT 2 = {lit2}"
+printfn $"volume = {sumVolume cubes2}"
+printfn $"intersects = {findIntersects cubes2}"
+cubes2 |> List.map (fun c1 -> printfn $"*** Cuboid : {c1}")
+
+printfn "#### ROUND 3 ###"
+
+let lit3 = countLit cubes3
+printfn $"LIT 3 = {lit3}"
+printfn $"volume = {sumVolume cubes3}"
+printfn $"intersects = {findIntersects cubes3}"
+
+cubes3 |> List.map (fun c1 -> printfn $"*** Cuboid : {c1}")
+
+
 printfn $"endCubes={endCubes}"
 let ons = endCubes |> List.filter (fun (_,state) -> state = ON) |> List.map fst
 
