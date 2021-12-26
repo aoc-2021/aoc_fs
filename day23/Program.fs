@@ -45,7 +45,7 @@ let columnOf (amp: Amp) =
 
 let walkCost ((x1, y1): Pos) ((x2, y2): Pos) = abs (x1 - x2) + abs (y2 - y1)
 
-type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>) =
+type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, depth: int) =
     member this.Amps = amps
     member this.Cost = cost
     member this.Moves = moves
@@ -64,7 +64,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>) =
     member this.ParkedAmps() =
         amps
         |> Map.keys
-        |> Seq.filter (fun (x, y) -> y = 0)
+        |> Seq.filter (fun (_, y) -> y = 0)
         |> Seq.toList
 
     member this.MovableRoomAmps() =
@@ -94,13 +94,24 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>) =
         | Some (amp) ->
             let tx = columnOf amp
 
-            match amps.TryFind(tx, 1) with
-            | Some _ -> None
-            | None ->
-                match amps.TryFind(tx, 2) with
-                | None -> Some(tx, 2)
-                | Some (other) when other = amp -> Some(tx, 1)
-                | Some _ -> None
+            let available =
+                amps
+                |> Map.toList
+                |> List.filter (fun ((x, _), _) -> x = tx)
+                |> List.filter (fun ((x, _), amp) -> x <> columnOf amp)
+                |> List.isEmpty
+
+            if not available then
+                None
+            else
+                let rec find (x, y) =
+                    if amps.ContainsKey(x, y) then
+                        find (x, y - 1)
+                    else
+                        (x, y)
+
+                Some(find (tx, depth))
+
 
     member this.PathToHome (pos: Pos) ((homeX, homeY): Pos) : bool =
         let rec walkHome (pos: Pos) : bool =
@@ -126,7 +137,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>) =
             if x < 0 || amps.ContainsKey(x, y) then
                 []
             else if legalParking (x, y) then
-                (x,y) :: (findLeft (x - 1, y))
+                (x, y) :: (findLeft (x - 1, y))
             else
                 findLeft (x - 1, y)
 
@@ -153,17 +164,35 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>) =
         let amps =
             amps.Remove((x, y)).Add((destX, destY), amp)
 
-        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves)
+        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves,2)
 
     member this.IsWin() =
-        amps |> Map.toList |> List.sort = [ ((2, 1), A)
-                                            ((2, 2), A)
-                                            ((4, 1), B)
-                                            ((4, 2), B)
-                                            ((6, 1), C)
-                                            ((6, 2), C)
-                                            ((8, 1), D)
-                                            ((8, 2), D) ]
+        if amps.Count = 8 then
+            amps |> Map.toList |> List.sort = [ ((2, 1), A)
+                                                ((2, 2), A)
+                                                ((4, 1), B)
+                                                ((4, 2), B)
+                                                ((6, 1), C)
+                                                ((6, 2), C)
+                                                ((8, 1), D)
+                                                ((8, 2), D) ]
+        else
+            amps |> Map.toList |> List.sort = [ ((2, 1), A)
+                                                ((2, 2), A)
+                                                ((2, 3), A)
+                                                ((2, 4), A)
+                                                ((4, 1), B)
+                                                ((4, 2), B)
+                                                ((4, 3), B)
+                                                ((4, 4), B)
+                                                ((6, 1), C)
+                                                ((6, 2), C)
+                                                ((6, 3), C)
+                                                ((6, 4), C)
+                                                ((8, 1), D)
+                                                ((8, 2), D)
+                                                ((8, 3), D)
+                                                ((8, 4), D) ]
 
 type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
     member this.Map = memo
@@ -193,10 +222,34 @@ type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
 
     static member empty = Memo(Map.empty, None)
 
-let toBurrow (input: List<Amp * Amp>) =
+let toPart1Burrow (input: List<Amp * Amp>) =
     input
     |> toAmpPositions
-    |> (fun amps -> Burrow(amps, 0L, []))
+    |> (fun amps -> Burrow(amps, 0L, [],2))
+
+let toPart2Burrow (input: List<Amp * Amp>) =
+    let amps: List<Pos * Amp> =
+        input
+        |> toAmpPositions
+        |> Map.toList
+        |> List.map
+            (fun ((x, y), amp) ->
+                let y = if y = 1 then 1 else 4
+                ((x, y), amp))
+
+    let more =
+        [ ((2, 2), D)
+          ((2, 3), D)
+          ((4, 2), C)
+          ((4, 3), B)
+          ((6, 2), B)
+          ((6, 3), A)
+          ((8, 2), A)
+          ((8, 3), C) ]
+
+    List.concat [ amps; more ]
+    |> Map 
+    |> (fun amps -> Burrow(amps, 0L, [],4))
 
 let findNexts (burrow: Burrow) : List<Burrow> =
     let homebounds: List<Pos * Pos> =
@@ -206,7 +259,6 @@ let findNexts (burrow: Burrow) : List<Burrow> =
         |> List.map (fun (pos, target) -> (pos, target |> Option.get))
         |> List.filter (fun (pos, target) -> burrow.PathToHome pos target)
 
-    // printfn $"Homebounds: {homebounds}"
 
     if homebounds <> [] then
         let burrow =
@@ -225,15 +277,12 @@ let findNexts (burrow: Burrow) : List<Burrow> =
                     |> List.map (fun spot -> (roomie, spot)))
             |> List.concat
 
-        // printfn $"Roomies: {roomies}"
 
         let burrows =
             roomieMoves
             |> List.map (fun (startPos, endPos) -> burrow.Move startPos endPos)
             |> List.sortBy (fun burrow -> burrow.Cost)
 
-        // printfn $"RoomieMoves: {roomieMoves.Length} {roomieMoves} "
-        // printfn $"burrows : {burrows}"
         burrows
 
 let rec find (memo: Memo) (burrow: Burrow) : Memo =
@@ -248,8 +297,8 @@ let rec find (memo: Memo) (burrow: Burrow) : Memo =
     else
         findNexts burrow |> List.fold find memo
 
-let prodBurrow = toBurrow prodInput
-let testBurrow = toBurrow testInput
+let prodBurrow = toPart1Burrow prodInput
+let testBurrow = toPart1Burrow testInput
 
 printfn $"memo: {testBurrow.MemoKey}"
 let nexts = findNexts prodBurrow
