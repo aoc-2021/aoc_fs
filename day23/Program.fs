@@ -1,308 +1,263 @@
-open System.IO
-
-let file = File.ReadAllLines "input.txt"
-
 type Amp =
     | A
     | B
     | C
     | D
 
-let stepCost (amp: Amp) : int64 =
+type Cost = int64
+
+type Pos = int * int
+
+let moveCost (amp: Amp) =
     match amp with
     | A -> 1L
     | B -> 10L
-    | C -> 20L
-    | D -> 30L
+    | C -> 100L
+    | D -> 1000L
 
-type Pos = int * int
-let nowhere: Pos = -1, -1
+let testInput = [ (B, A); (C, D); (B, C); (D, A) ]
+let prodInput = [ (D, D); (A, C); (C, B); (A, B) ]
 
-let hallway =
-    { 0 .. 10 }
-    |> Seq.map (fun x -> (x, 2))
-    |> Seq.toList
+let allCoordinates: Set<Pos> =
+    let hallway: List<Pos> =
+        [ 0 .. 11 ] |> List.map (fun x -> (x, 0))
 
-let roomA = [ (2, 0); (2, 1) ]
-let roomB = [ (4, 0); (4, 1) ]
-let roomC = [ (6, 0); (6, 1) ]
-let roomD = [ (8, 0); (8, 1) ]
+    let rooms = List.allPairs [ 2; 4; 6; 8 ] [ 1; 2 ]
+    List.concat [ hallway; rooms ] |> Set
 
-let allRooms: Set<Pos> =
-    List.concat [ hallway
-                  roomA
-                  roomB
-                  roomC
-                  roomD ]
-    |> Set
+let toAmpPositions ([ (a1, a2); (b1, b2); (c1, c2); (d1, d2) ]: list<Amp * Amp>) : Map<Pos, Amp> =
+    let a1 = ((2, 1), a1)
+    let a2 = ((2, 2), a2)
+    let b1 = ((4, 1), b1)
+    let b2 = ((4, 2), b2)
+    let c1 = ((6, 1), c1)
+    let c2 = ((6, 2), c2)
+    let d1 = ((8, 1), d1)
+    let d2 = ((8, 2), d2)
+    [ a1; a2; b1; b2; c1; c2; d1; d2 ] |> Map
 
-let roomOwners: Map<Pos, Amp> =
-    let roomA = roomA |> List.map (fun p -> p, A)
-    let roomB = roomB |> List.map (fun p -> p, B)
-    let roomC = roomC |> List.map (fun p -> p, C)
-    let roomD = roomD |> List.map (fun p -> p, D)
+let columnOf (amp: Amp) =
+    match amp with
+    | A -> 2
+    | B -> 4
+    | C -> 6
+    | D -> 8
 
-    List.concat [ roomA
-                  roomB
-                  roomC
-                  roomD ]
-    |> Map
+let walkCost ((x1, y1): Pos) ((x2, y2): Pos) = abs (x1 - x2) + abs (y2 - y1)
 
-let ampPos ([ (a1, a2); (b1, b2); (c1, c2); (d1, d2) ]: list<Amp * Amp>) : Map<Pos, Amp> =
-    [ (roomA.Head, a1)
-      (roomA.Tail.Head, a2)
-      (roomB.Head, b1)
-      (roomB.Tail.Head, b2)
-      (roomC.Head, c1)
-      (roomC.Tail.Head, c2)
-      (roomD.Head, d1)
-      (roomD.Tail.Head, d2) ]
-    |> Map
-
-let testAmps =
-    ampPos [ (A, B)
-             (D, C)
-             (C, B)
-             (A, D) ]
-
-let prodAmps =
-    ampPos [ (D, D)
-             (C, A)
-             (B, C)
-             (B, A) ]
-
-let targetAmps =
-    ampPos [ (A, A)
-             (B, B)
-             (C, C)
-             (D, D) ]
-
-let neighbors: Map<Pos, list<Pos>> =
-    allRooms
-    |> Set.toList
-    |> List.map
-        (fun (x, y) ->
-            (x, y),
-            ([ (x + 1, y)
-               (x - 1, y)
-               (x, y + 1)
-               (x, y - 1) ]
-             |> List.filter allRooms.Contains))
-    |> Map
-
-let ampAtTarget (amps: Map<Pos, Amp>) (pos: Pos) =
-    match pos with
-    | (x, 0) when roomOwners.TryFind pos = amps.TryFind pos -> true
-    | (x, 1) when roomOwners.TryFind pos = amps.TryFind pos -> roomOwners.TryFind(x, 0) = amps.TryFind(x, 0) // below is ok too
-    | _ -> false
-
-let notAtTarget (amps: Map<Pos, Amp>) =
-    amps
-    |> Map.filter (fun pos amp -> ampAtTarget amps pos |> not)
-
-let freeAroundAmp (amps: Map<Pos, Amp>) (pos: Pos) =
-    let neighbors = neighbors.TryFind pos |> Option.get
-
-    let free =
-        neighbors
-        |> List.filter (fun pos -> amps.TryFind pos = None)
-
-    free
-
-type HallwayState =
-    | PODFRESH
-    | PARKED
-    | UNPARKED
-
-type MemoKey = Map<Pos, Amp> * Map<Pos, HallwayState>
-
-type State(amps: Map<Pos, Amp>, cost: int64, lastMoved: Pos, moveStates: Map<Pos, HallwayState>) =
+type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>) =
     member this.Amps = amps
     member this.Cost = cost
+    member this.Moves = moves
 
-    member this.MemoKey: MemoKey = (amps, moveStates)
+    member this.MemoKey: string =
+        allCoordinates
+        |> Set.toList
+        |> List.sort
+        |> List.map amps.TryFind
+        |> List.map (fun o -> o |> Option.map (fun c -> c.ToString()))
+        |> List.map (fun o -> o |> Option.defaultValue ".")
+        |> String.concat ""
 
-    override this.ToString() =
-        let valid = if this.isValid () then "" else "[X]"
-        $"State({valid}{amps},{cost} last={lastMoved} moveStates:{moveStates})"
+    override this.ToString() : string = $"Burrow({this.MemoKey} {this.Cost})"
 
-    member this.AvailableMoves() : list<Amp * Pos * Pos> =
+    member this.ParkedAmps() =
         amps
-        |> notAtTarget
-        |> Map.toList
-        |> List.map
-            (fun (pos, amp) ->
-                freeAroundAmp amps pos
-                |> List.map (fun other -> (amp, pos, other)))
-        |> List.concat
+        |> Map.keys
+        |> Seq.filter (fun (x, y) -> y = 0)
+        |> Seq.toList
 
-    member this.ForcedMoves: list<Pos> =
-        let blocking =
-            amps.Keys
-            |> Seq.filter (fun (_, y) -> y = 2)
-            |> Seq.filter (fun (x, _) -> x = 2 || x = 4 || x = 6 || x = 8)
-            |> Seq.toList
-
-        let unparked =
-            moveStates
-            |> Map.filter (fun pos hs -> hs = UNPARKED)
+    member this.MovableRoomAmps() =
+        let roomAmps =
+            amps
             |> Map.keys
+            |> Seq.filter (fun (x, y) -> y <> 0)
             |> Seq.toList
 
-        [ blocking; unparked ] |> List.concat
+        let movable ((x, y): Pos) = amps.ContainsKey(x, y - 1) |> not // no one outside
 
-    member this.ForcedMove() : Option<Pos> =
-        if this.ForcedMoves.IsEmpty then
-            None
-        else
-            Some(this.ForcedMoves.Head)
+        let inPlace ((x, y): Pos) =
+            let amp = amps.TryFind((x, y)) |> Option.get
 
-    member this.isValid() : bool = this.ForcedMoves.Length < 2
-
-    member this.Move (amp: Amp) (pos: Pos) (dest: Pos) =
-        let (x, y) = pos
-        let (_, dy) = dest
-        let cost = cost + (stepCost amp)
-        let amps = amps.Remove pos
-        let amps = amps.Add(dest, amp)
-
-        let moveState =
-            match moveStates.TryFind pos with
-            | None -> PODFRESH
-            | Some (PODFRESH) -> PODFRESH
-            | Some (PARKED) -> UNPARKED
-            | Some (UNPARKED) -> UNPARKED
-
-        let moveStates =
-            moveStates |> Map.map (fun pos hs -> PARKED)
-
-        let moveStates =
-            if y = 2 then
-                moveStates.Remove(x, y)
+            if columnOf amp <> x then
+                false // wrong room
             else
-                moveStates
+                (amps.TryFind(x, y + 1) |> Option.defaultValue amp) = amp // not a wrong amp below
 
-        let moveStates =
-            if dy = 2 then
-                moveStates.Add(dest, moveState)
+        roomAmps
+        |> List.filter movable
+        |> List.filter (fun pos -> inPlace pos |> not)
+
+    member this.AvailableHome(parked: Pos) : Option<Pos> =
+        match amps.TryFind parked with
+        | None -> None
+        | Some (amp) ->
+            let tx = columnOf amp
+
+            match amps.TryFind(tx, 1) with
+            | Some _ -> None
+            | None ->
+                match amps.TryFind(tx, 2) with
+                | None -> Some(tx, 2)
+                | Some (other) when other = amp -> Some(tx, 1)
+                | Some _ -> None
+
+    member this.PathToHome (pos: Pos) ((homeX, homeY): Pos) : bool =
+        let rec walkHome (pos: Pos) : bool =
+            if pos = (homeX, homeY) then
+                true
             else
-                moveStates
+                let nextPos =
+                    match pos with
+                    | (x, y) when x < homeX -> (x + 1, y)
+                    | (x, y) when x > homeX -> (x - 1, y)
+                    | (x, y) -> (x, y + 1)
 
-        State(amps, cost, dest, moveStates)
+                match amps.TryFind nextPos with
+                | Some _ -> false
+                | None -> walkHome nextPos
 
-let amps = testAmps
-let initState = State(amps, 0L, nowhere, Map.empty)
+        walkHome pos
 
+    member this.AvailableParkingSpots((x, _): Pos) : list<Pos> =
+        let legalParking (x, y) = x <> 2 && x <> 4 && x <> 6 && x <> 8
 
-let rec atHome (amps: Map<Pos, Amp>) ((x, y): Pos) =
-    let inHomeColumn =
-        roomOwners.TryFind(x, y) = amps.TryFind(x, y)
+        let rec findLeft (x, y) =
+            if x < 0 || amps.ContainsKey(x, y) then
+                []
+            else if legalParking (x, y) then
+                (x,y) :: (findLeft (x - 1, y))
+            else
+                findLeft (x - 1, y)
 
-    if not inHomeColumn then false
-    else if y = 0 then true
-    else atHome amps (x, y - 1)
+        let rec findRight (x, y) =
+            if x > 10 || amps.ContainsKey(x, y) then
+                []
+            else if legalParking (x, y) then
+                (x, y) :: (findRight (x + 1, y))
+            else
+                findRight (x + 1, y)
 
-let legalDest (state: State) (amp: Amp) ((x, y): Pos) ((dx, dy): Pos) =
-    let home = atHome amps (x, y)
+        let lefts = findLeft (x - 1, 0)
+        let rights = findRight (x + 1, 0)
+        List.concat [ lefts; rights ]
 
-    if home then
-        false
+    member this.Move ((x, y): Pos) ((destX, destY): Pos) : Burrow =
+        let amp = amps.TryFind(x, y) |> Option.get // assume there's someone to move
+        let dx = abs (destX - x)
+        let dy = abs (destY - y)
+
+        let addedCost = ((dx + dy) |> int64) * (moveCost amp)
+        let cost = cost + addedCost
+
+        let amps =
+            amps.Remove((x, y)).Add((destX, destY), amp)
+
+        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves)
+
+    member this.IsWin() =
+        amps |> Map.toList |> List.sort = [ ((2, 1), A)
+                                            ((2, 2), A)
+                                            ((4, 1), B)
+                                            ((4, 2), B)
+                                            ((6, 1), C)
+                                            ((6, 2), C)
+                                            ((8, 1), D)
+                                            ((8, 2), D) ]
+
+type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
+    member this.Map = memo
+    member this.Best = best
+
+    member this.Roof =
+        best
+        |> Option.map (fun burrow -> burrow.Cost)
+        |> Option.defaultValue 1_000_000_000
+
+    override this.ToString() = $"Memo ({memo.Count} best:{this.Roof})"
+
+    member this.Register(burrow: Burrow) : Memo * bool =
+        match memo.TryFind burrow.MemoKey with
+        | Some (prevCost) when prevCost <= burrow.Cost -> this, false
+        | _ ->
+            let memo =
+                Memo(memo.Add(burrow.MemoKey, burrow.Cost), best)
+
+            let newBest =
+                if burrow.IsWin() && burrow.Cost < memo.Roof then
+                    Some(burrow)
+                else
+                    best
+
+            Memo(memo.Map, newBest), true
+
+    static member empty = Memo(Map.empty, None)
+
+let toBurrow (input: List<Amp * Amp>) =
+    input
+    |> toAmpPositions
+    |> (fun amps -> Burrow(amps, 0L, []))
+
+let findNexts (burrow: Burrow) : List<Burrow> =
+    let homebounds: List<Pos * Pos> =
+        burrow.ParkedAmps()
+        |> List.map (fun pos -> pos, burrow.AvailableHome pos)
+        |> List.filter (fun (_, target) -> target <> None)
+        |> List.map (fun (pos, target) -> (pos, target |> Option.get))
+        |> List.filter (fun (pos, target) -> burrow.PathToHome pos target)
+
+    // printfn $"Homebounds: {homebounds}"
+
+    if homebounds <> [] then
+        let burrow =
+            homebounds
+            |> List.fold (fun (burrow: Burrow) (parked, home) -> burrow.Move parked home) burrow
+
+        [ burrow ]
     else
-        match roomOwners.TryFind(dx, dy) with
-        | None -> true // moving into the hallway is ok
-        | _ when dy > y -> true // moving up is ok
-        | Some (owner) when owner <> amp -> false // moving down into anothers pen is not allowed
-        | Some (_) ->
-            let below =
-                roomOwners.TryFind(dx, dy - 1)
-                |> Option.defaultValue amp // counting bottom as self
+        let roomies = burrow.MovableRoomAmps()
 
-            below = amp
+        let roomieMoves =
+            roomies
+            |> List.map
+                (fun roomie ->
+                    burrow.AvailableParkingSpots roomie
+                    |> List.map (fun spot -> (roomie, spot)))
+            |> List.concat
 
+        // printfn $"Roomies: {roomies}"
 
-let nextSteps (state: State) : list<State> =
-    if state.isValid () then
-        // printfn $"nextSteps ({state})"
-        let moves = state.AvailableMoves()
-        let forced = state.ForcedMoves
-        // printfn $"available: {moves}"
-        // printfn $"forced: {forced}"
-        let moves: List<Amp * Pos * Pos> =
-            if forced.IsEmpty then
-                moves
-            else
-                moves
-                |> List.filter (fun (amp, pos, dest) -> pos = forced.Head)
+        let burrows =
+            roomieMoves
+            |> List.map (fun (startPos, endPos) -> burrow.Move startPos endPos)
+            |> List.sortBy (fun burrow -> burrow.Cost)
 
-        let moves =
-            moves
-            |> List.filter (fun (amp, pos, dest) -> legalDest state amp pos dest)
+        // printfn $"RoomieMoves: {roomieMoves.Length} {roomieMoves} "
+        // printfn $"burrows : {burrows}"
+        burrows
 
-        moves
-        |> List.map (fun (amp, pos, dest) -> state.Move amp pos dest)
+let rec find (memo: Memo) (burrow: Burrow) : Memo =
+    if memo.Map.Count % 1000 = 0 then
+        printfn $"{memo} {burrow.Cost}"
+
+    let tooExpensive = burrow.Cost > memo.Roof
+    let memo, better = memo.Register burrow
+
+    if not better || tooExpensive then
+        memo
     else
-        []
+        findNexts burrow |> List.fold find memo
 
-let state1 = initState.Move B (2, 1) (2, 2)
-printfn $"state1={state1}"
-printfn $"forced={state1.ForcedMoves}"
-let state2 = state1.Move C (4, 1) (4, 2)
-printfn $"state2={state2}"
-printfn $"forced={state2.ForcedMoves}"
+let prodBurrow = toBurrow prodInput
+let testBurrow = toBurrow testInput
 
-let state3 = state2.Move C (4, 2) (3, 2)
-printfn $"state3={state3}"
-printfn $"forced={state3.ForcedMoves}"
+printfn $"memo: {testBurrow.MemoKey}"
+let nexts = findNexts prodBurrow
 
-let state4 = state3.Move C (2, 2) (1, 2)
-printfn $"state4={state4}"
-printfn $"forced={state4.ForcedMoves}"
+printfn $"nexts = {nexts}"
 
+let memo = find Memo.empty prodBurrow
+let final = memo.Best |> Option.get
 
-let next = nextSteps initState
-
-let steps1 = nextSteps initState
-printfn $"steps1 = {steps1}"
-
-type Memo = Map<MemoKey, int64>
-
-let emptyMemo = Map.empty
-
-let rec solve (bestDone: State) (memo: Memo) (states: list<State>) (depth: int) : State =
-    if depth > 1000 then
-        bestDone
-    else
-        printfn $"solve {depth} {memo.Count}" // {bestDone} {memo.Count} {states}"
-
-        match states with
-        | [] -> bestDone
-        | state :: states ->
-            let memoValue: int64 =
-                memo.TryFind state.MemoKey
-                |> Option.defaultValue 100000000L // non-existence is expensive
-
-            if state.Cost > memoValue then
-                solve bestDone memo states (depth) // just skipping this
-            else
-                let memo = memo.Add(state.MemoKey, state.Cost)
-
-                let bestDone =
-                    if state.Amps = targetAmps then // finished
-                        if state.Cost < bestDone.Cost then
-                            state
-                        else
-                            bestDone
-                    else
-                        bestDone
-
-                let newStates = nextSteps state
-                let states = List.concat [ newStates; states ]
-                solve bestDone memo states (depth + 1)
-
-let fakeState =
-    State(targetAmps, 1000000000L, nowhere, Map.empty)
-
-let solution =
-    solve fakeState emptyMemo [ initState ] 0
-
-printfn $"solution = {solution}"
+printfn $"moves: "
+final.Moves |> List.map (fun p -> printfn $"{p}")
