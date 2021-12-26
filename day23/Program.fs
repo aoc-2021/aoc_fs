@@ -4,6 +4,13 @@ type Amp =
     | C
     | D
 
+let ampChar (amp:Amp) =
+    match amp with
+    | A -> 'a'
+    | B -> 'b'
+    | C -> 'c'
+    | D -> 'd'
+
 type Cost = int64
 
 type Pos = int * int
@@ -55,9 +62,10 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         |> Set.toList
         |> List.sort
         |> List.map amps.TryFind
-        |> List.map (fun o -> o |> Option.map (fun c -> c.ToString()))
-        |> List.map (fun o -> o |> Option.defaultValue ".")
-        |> String.concat ""
+        |> List.map (fun o -> o |> Option.map ampChar) 
+        |> List.map (fun o -> o |> Option.defaultValue '.')
+        |> List.toArray
+        |> System.String 
 
     override this.ToString() : string = $"Burrow({this.MemoKey} {this.Cost})"
 
@@ -131,7 +139,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         walkHome pos
 
     member this.AvailableParkingSpots((x, _): Pos) : list<Pos> =
-        let legalParking (x, y) = x <> 2 && x <> 4 && x <> 6 && x <> 8
+        let legalParking (x, _) = x <> 2 && x <> 4 && x <> 6 && x <> 8
 
         let rec findLeft (x, y) =
             if x < 0 || amps.ContainsKey(x, y) then
@@ -234,7 +242,7 @@ let toPart2Burrow (input: List<Amp * Amp>) =
         |> Map.toList
         |> List.map
             (fun ((x, y), amp) ->
-                let y = if y = 1 then 1 else 4
+                let y = if y = 2 then 4 else y
                 ((x, y), amp))
 
     let more =
@@ -300,12 +308,14 @@ let rec find (memo: Memo) (burrow: Burrow) : Memo =
 let prodBurrow = toPart1Burrow prodInput
 let testBurrow = toPart1Burrow testInput
 
+let initBurrow = testBurrow
+
 printfn $"memo: {testBurrow.MemoKey}"
-let nexts = findNexts prodBurrow
+let nexts = findNexts initBurrow
 
 printfn $"nexts = {nexts}"
 
-let memo = find Memo.empty prodBurrow
+let memo = find Memo.empty initBurrow
 let final = memo.Best |> Option.get
 
 printfn $"moves: "
