@@ -156,8 +156,12 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
                         find (x, y - 1)
                     else
                         (x, y)
-
-                Some(find (tx, depth))
+                let homePos = Some(find (tx, depth))
+                if (amps.ContainsKey (homePos |> Option.get)) then
+                    let msg = $"Chose an occupied home pos: {parked} {homePos}" +
+                              $"\n burrow = {this.ToBurrowMap ()}\n"
+                    failwith msg 
+                homePos 
 
 
     member this.PathToHome (pos: Pos) ((homeX, homeY): Pos) : bool =
@@ -211,7 +215,17 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         let amps =
             amps.Remove((x, y)).Add((destX, destY), amp)
 
-        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves, depth)
+        let newBurrow = Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves, depth)
+        if newBurrow.Amps.Count % 2 = 1 then
+            let from = this.ToBurrowMap ()
+            let into = newBurrow.ToBurrowMap() 
+            let msg = $"Ate an amphipode: {(x,y)} -> {(destX,destY)}" +
+                      $"when moving from \n{from}\n" +
+                      $"to \n{into}\n"
+            failwith msg 
+        newBurrow 
+          
+            
 
     member this.IsWin() =
         if amps.Count = 8 then
@@ -241,26 +255,26 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
                                                 ((8, 3), D)
                                                 ((8, 4), D) ]
 
-let toBurrowMap (burrow: Burrow) =
-    let ampToChar (amp: Amp) = amp.AsChar
+    member this.ToBurrowMap () =
+        let ampToChar (amp: Amp) = amp.AsChar
 
-    let toChar (pos: Pos) : char =
-        if (fst pos) = 12 then
-            '\n'
-        elif allCoordinates.Contains pos then
-            burrow.Amps.TryFind pos
-            |> Option.map ampToChar
-            |> Option.defaultValue '.'
-        else
-            '█'
+        let toChar (pos: Pos) : char =
+            if (fst pos) = 12 then
+              '\n'
+            elif allCoordinates.Contains pos then
+                amps.TryFind pos
+                |> Option.map ampToChar
+                |> Option.defaultValue '.'
+            else
+                '█'
 
-    Array.allPairs [| -1 .. 5 |] [| -1 .. 12 |]
-    |> Array.map (fun (y, x) -> (x, y))
-    |> Array.map toChar
-    |> System.String
+        Array.allPairs [| -1 .. 5 |] [| -1 .. 12 |]
+        |> Array.map (fun (y, x) -> (x, y))
+        |> Array.map toChar
+        |> System.String
 
 let printBurrow (burrow: Burrow) =
-    let map = toBurrowMap burrow
+    let map = burrow.ToBurrowMap ()
     printfn $"Burrow [{burrow.Depth}]:\n{map}"
 
 type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
@@ -327,13 +341,11 @@ let findNexts (burrow: Burrow) : List<Burrow> =
         |> List.filter (fun (_, target) -> target <> None)
         |> List.map (fun (pos, target) -> (pos, target |> Option.get))
         |> List.filter (fun (pos, target) -> burrow.PathToHome pos target)
-
-
+        
     if homebounds <> [] then
         let burrow =
-            homebounds
-            |> List.fold (fun (burrow: Burrow) (parked, home) -> burrow.Move parked home) burrow
-
+            let (from,into) = homebounds.Head
+            burrow.Move from into 
         [ burrow ]
     else
         let roomies = burrow.MovableRoomAmps()
