@@ -1,35 +1,60 @@
+type Cost = int64
+type Pos = int*int 
+
 type Amp =
     | A
     | B
     | C
     | D
-
-let ampChar (amp:Amp) =
-    match amp with
-    | A -> 'a'
-    | B -> 'b'
-    | C -> 'c'
-    | D -> 'd'
-
-type Cost = int64
-
-type Pos = int * int
-
-let moveCost (amp: Amp) =
-    match amp with
-    | A -> 1L
-    | B -> 10L
-    | C -> 100L
-    | D -> 1000L
-
+    member this.AsChar =
+        match this with
+        | A -> 'A'
+        | B -> 'B'
+        | C -> 'C'
+        | D -> 'D'
+    member this.Cost : Cost =
+        match this with
+        | A -> 1L
+        | B -> 10L
+        | C -> 100L
+        | D -> 1000L
+    
+    member this.Column =
+        match this with
+        | A -> 2
+        | B -> 4
+        | C -> 6
+        | D -> 8
+    member this.HexValue : int64 =
+        match this with 
+        | A -> 1
+        | B -> 2
+        | C -> 4
+        | D -> 8
+    member this.HexComplement : int64 =
+        match this with
+        | A -> 0xFL ^^^ 1L
+        | B -> 0xFL ^^^ 2L
+        | C -> 0xFL ^^^ 4L
+        | D -> 0xFL ^^^ 8L
+    member this.Mask = 0xFL
+    member this.ComplementMask = 0xFL ^^^ 0L
+        
 let testInput = [ (B, A); (C, D); (B, C); (D, A) ]
 let prodInput = [ (D, D); (A, C); (C, B); (A, B) ]
 
 let allCoordinates: Set<Pos> =
     let hallway: List<Pos> =
-        [ 0 .. 11 ] |> List.map (fun x -> (x, 0))
+        [ 0 .. 10 ] |> List.map (fun x -> (x, 0))
 
-    let rooms = List.allPairs [ 2; 4; 6; 8 ] [ 1; 2 ]
+    let rooms =
+        List.allPairs [ 2; 4; 6; 8 ] [
+            1
+            2
+            3
+            4
+        ]
+
     List.concat [ hallway; rooms ] |> Set
 
 let toAmpPositions ([ (a1, a2); (b1, b2); (c1, c2); (d1, d2) ]: list<Amp * Amp>) : Map<Pos, Amp> =
@@ -62,10 +87,10 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         |> Set.toList
         |> List.sort
         |> List.map amps.TryFind
-        |> List.map (fun o -> o |> Option.map ampChar) 
+        |> List.map (fun o -> o |> Option.map (fun amp -> amp.AsChar))
         |> List.map (fun o -> o |> Option.defaultValue '.')
         |> List.toArray
-        |> System.String 
+        |> System.String
 
     override this.ToString() : string = $"Burrow({this.MemoKey} {this.Cost})"
 
@@ -79,7 +104,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         let roomAmps =
             amps
             |> Map.keys
-            |> Seq.filter (fun (x, y) -> y <> 0)
+            |> Seq.filter (fun (_, y) -> y <> 0)
             |> Seq.toList
 
         let movable ((x, y): Pos) = amps.ContainsKey(x, y - 1) |> not // no one outside
@@ -90,11 +115,20 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
             if columnOf amp <> x then
                 false // wrong room
             else
-                (amps.TryFind(x, y + 1) |> Option.defaultValue amp) = amp // not a wrong amp below
+                let b1 =
+                    (amps.TryFind(x, y + 1) |> Option.defaultValue amp) = amp // not a wrong amp below
+
+                let b2 =
+                    (amps.TryFind(x, y + 2) |> Option.defaultValue amp) = amp // below that again
+
+                let b3 =
+                    (amps.TryFind(x, y + 3) |> Option.defaultValue amp) = amp // basement or below
+
+                b1 && b2 && b3
 
         roomAmps
         |> List.filter movable
-        |> List.filter (fun pos -> inPlace pos |> not)
+        |> List.filter (inPlace >> not) //  (fun pos -> inPlace pos |> not)
 
     member this.AvailableHome(parked: Pos) : Option<Pos> =
         match amps.TryFind parked with
@@ -128,9 +162,9 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
             else
                 let nextPos =
                     match pos with
-                    | (x, y) when x < homeX -> (x + 1, y)
-                    | (x, y) when x > homeX -> (x - 1, y)
-                    | (x, y) -> (x, y + 1)
+                    | x, y when x < homeX -> (x + 1, y)
+                    | x, y when x > homeX -> (x - 1, y)
+                    | x, y -> (x, y + 1)
 
                 match amps.TryFind nextPos with
                 | Some _ -> false
@@ -166,13 +200,13 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         let dx = abs (destX - x)
         let dy = abs (destY - y)
 
-        let addedCost = ((dx + dy) |> int64) * (moveCost amp)
+        let addedCost = ((dx + dy) |> int64) * amp.Cost
         let cost = cost + addedCost
 
         let amps =
             amps.Remove((x, y)).Add((destX, destY), amp)
 
-        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves,2)
+        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves, 2)
 
     member this.IsWin() =
         if amps.Count = 8 then
@@ -202,6 +236,23 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
                                                 ((8, 3), D)
                                                 ((8, 4), D) ]
 
+let toBurrowMap (burrow:Burrow) =
+    let ampToChar (amp:Amp) = amp.AsChar 
+    let toChar (pos:Pos) : char =
+        if (fst pos) = 12 then '\n'
+        elif allCoordinates.Contains pos then
+            burrow.Amps.TryFind pos
+            |> Option.map ampToChar
+            |> Option.defaultValue '.'
+        else '█'
+    Array.allPairs [|-1..5|] [|-1..12|]
+    |> Array.map (fun (y,x) -> (x,y))
+    |> Array.map toChar
+    |> System.String
+
+let printBurrow (burrow:Burrow) =     
+    let map = toBurrowMap burrow
+    printfn $"Burrow:\n{map}"
 type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
     member this.Map = memo
     member this.Best = best
@@ -233,7 +284,7 @@ type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
 let toPart1Burrow (input: List<Amp * Amp>) =
     input
     |> toAmpPositions
-    |> (fun amps -> Burrow(amps, 0L, [],2))
+    |> (fun amps -> Burrow(amps, 0L, [], 2))
 
 let toPart2Burrow (input: List<Amp * Amp>) =
     let amps: List<Pos * Amp> =
@@ -256,8 +307,8 @@ let toPart2Burrow (input: List<Amp * Amp>) =
           ((8, 3), C) ]
 
     List.concat [ amps; more ]
-    |> Map 
-    |> (fun amps -> Burrow(amps, 0L, [],4))
+    |> Map
+    |> (fun amps -> Burrow(amps, 0L, [], 4))
 
 let findNexts (burrow: Burrow) : List<Burrow> =
     let homebounds: List<Pos * Pos> =
@@ -276,6 +327,9 @@ let findNexts (burrow: Burrow) : List<Burrow> =
         [ burrow ]
     else
         let roomies = burrow.MovableRoomAmps()
+        if roomies.IsEmpty then
+            printfn "No more moves for:"
+            printBurrow burrow 
 
         let roomieMoves =
             roomies
@@ -317,6 +371,18 @@ printfn $"nexts = {nexts}"
 
 let memo = find Memo.empty initBurrow
 let final = memo.Best |> Option.get
+printfn $"best cost {final.Cost}"
 
 printfn $"moves: "
 final.Moves |> List.map (fun p -> printfn $"{p}")
+
+toPart2Burrow testInput
+|> (fun burrow -> burrow.Amps)
+|> Map.toList
+|> List.map (fun f -> printfn $"P2TB: {f}")
+
+
+// printBurrow initBurrow
+
+// printfn "Nexts: "
+// findNexts initBurrow |> List.map printBurrow 
