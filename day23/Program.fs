@@ -85,6 +85,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
     member this.Amps = amps
     member this.Cost = cost
     member this.Moves() = moves |> List.rev
+    member this.Depth = depth 
 
     member this.MemoKey: string =
         allCoordinates
@@ -134,7 +135,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         |> List.filter movable
         |> List.filter (inPlace >> not) //  (fun pos -> inPlace pos |> not)
 
-    member this.AvailableHome(parked: Pos) : Option<Pos> =
+    member this.HomeFillingPos(parked: Pos) : Option<Pos> =
         match amps.TryFind parked with
         | None -> None
         | Some (amp) ->
@@ -210,7 +211,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         let amps =
             amps.Remove((x, y)).Add((destX, destY), amp)
 
-        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves, 2)
+        Burrow(amps, cost, ((x, y), (destX, destY), addedCost) :: moves, depth)
 
     member this.IsWin() =
         if amps.Count = 8 then
@@ -260,7 +261,7 @@ let toBurrowMap (burrow: Burrow) =
 
 let printBurrow (burrow: Burrow) =
     let map = toBurrowMap burrow
-    printfn $"Burrow:\n{map}"
+    printfn $"Burrow [{burrow.Depth}]:\n{map}"
 
 type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
     member this.Map = memo
@@ -322,7 +323,7 @@ let toPart2Burrow (input: List<Amp * Amp>) =
 let findNexts (burrow: Burrow) : List<Burrow> =
     let homebounds: List<Pos * Pos> =
         burrow.ParkedAmps()
-        |> List.map (fun pos -> pos, burrow.AvailableHome pos)
+        |> List.map (fun pos -> pos, burrow.HomeFillingPos pos)
         |> List.filter (fun (_, target) -> target <> None)
         |> List.map (fun (pos, target) -> (pos, target |> Option.get))
         |> List.filter (fun (pos, target) -> burrow.PathToHome pos target)
@@ -369,8 +370,8 @@ let rec find (memo: Memo) (burrow: Burrow) : Memo =
     else
         findNexts burrow |> List.fold find memo
 
-let prodBurrow = toPart1Burrow prodInput
-let testBurrow = toPart1Burrow testInput
+let prodBurrow = toPart2Burrow prodInput
+let testBurrow = toPart2Burrow testInput
 
 let initBurrow = testBurrow
 
@@ -380,13 +381,21 @@ let nexts = findNexts initBurrow
 printfn $"nexts = {nexts}"
 
 let memo = find Memo.empty initBurrow
-let final = memo.Best |> Option.get
-printfn $"best cost {final.Cost}"
+let final = memo.Best
+let answerString : string =
+                   final
+                   |> Option.map (fun burrow -> $"Cost: {burrow.Cost}")
+                   |> Option.defaultValue "No solution found"
+printfn $"Answer: {answerString}"
 
 printfn $"moves: "
+if final.IsSome then 
+    let final = final |> Option.get
+    final.Moves()
+    |> List.map (fun (start, finish, cost) -> printfn $"{start}->{finish} [{cost}]")
+    ()
 
-final.Moves()
-|> List.map (fun (start, finish, cost) -> printfn $"{start}->{finish} [{cost}]")
+printfn ""
 
 printfn "test input, part 2: "
 toPart2Burrow testInput |> printBurrow
