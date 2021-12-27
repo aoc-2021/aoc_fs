@@ -1,4 +1,4 @@
-type Cost = int64
+type Cost = uint64
 type Pos = int*int 
 
 type Amp =
@@ -14,10 +14,10 @@ type Amp =
         | D -> 'D'
     member this.Cost : Cost =
         match this with
-        | A -> 1L
-        | B -> 10L
-        | C -> 100L
-        | D -> 1000L
+        | A -> 1UL
+        | B -> 10UL
+        | C -> 100UL
+        | D -> 1000UL
     
     member this.Column =
         match this with
@@ -25,20 +25,20 @@ type Amp =
         | B -> 4
         | C -> 6
         | D -> 8
-    member this.HexValue : int64 =
+    member this.HexValue : uint64 =
         match this with 
-        | A -> 1
-        | B -> 2
-        | C -> 4
-        | D -> 8
-    member this.HexComplement : int64 =
+        | A -> 1UL
+        | B -> 2UL
+        | C -> 4UL
+        | D -> 8UL
+    member this.HexComplement : uint64 =
         match this with
-        | A -> 0xFL ^^^ 1L
-        | B -> 0xFL ^^^ 2L
-        | C -> 0xFL ^^^ 4L
-        | D -> 0xFL ^^^ 8L
-    member this.Mask = 0xFL
-    member this.ComplementMask = 0xFL ^^^ 0L
+        | A -> 0xFUL ^^^ 1UL
+        | B -> 0xFUL ^^^ 2UL
+        | C -> 0xFUL ^^^ 4UL
+        | D -> 0xFUL ^^^ 8UL
+    member this.Mask : uint64 = 0xFUL
+    member this.ComplementMask : uint64 = 0xFUL ^^^ 0UL
         
 let testInput = [ (B, A); (C, D); (B, C); (D, A) ]
 let prodInput = [ (D, D); (A, C); (C, B); (A, B) ]
@@ -200,7 +200,7 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
         let dx = abs (destX - x)
         let dy = abs (destY - y)
 
-        let addedCost = ((dx + dy) |> int64) * amp.Cost
+        let addedCost = ((dx + dy) |> uint64) * amp.Cost
         let cost = cost + addedCost
 
         let amps =
@@ -260,7 +260,7 @@ type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
     member this.Roof =
         best
         |> Option.map (fun burrow -> burrow.Cost)
-        |> Option.defaultValue 1_000_000_000
+        |> Option.defaultValue 1_000_000_000UL
 
     override this.ToString() = $"Memo ({memo.Count} best:{this.Roof})"
 
@@ -284,7 +284,7 @@ type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
 let toPart1Burrow (input: List<Amp * Amp>) =
     input
     |> toAmpPositions
-    |> (fun amps -> Burrow(amps, 0L, [], 2))
+    |> (fun amps -> Burrow(amps, 0UL, [], 2))
 
 let toPart2Burrow (input: List<Amp * Amp>) =
     let amps: List<Pos * Amp> =
@@ -308,7 +308,7 @@ let toPart2Burrow (input: List<Amp * Amp>) =
 
     List.concat [ amps; more ]
     |> Map
-    |> (fun amps -> Burrow(amps, 0L, [], 4))
+    |> (fun amps -> Burrow(amps, 0UL, [], 4))
 
 let findNexts (burrow: Burrow) : List<Burrow> =
     let homebounds: List<Pos * Pos> =
@@ -376,11 +376,8 @@ printfn $"best cost {final.Cost}"
 printfn $"moves: "
 final.Moves |> List.map (fun p -> printfn $"{p}")
 
-toPart2Burrow testInput
-|> (fun burrow -> burrow.Amps)
-|> Map.toList
-|> List.map (fun f -> printfn $"P2TB: {f}")
-
+printfn "test input, part 2: "
+toPart2Burrow testInput |> printBurrow
 
 // printBurrow initBurrow
 
