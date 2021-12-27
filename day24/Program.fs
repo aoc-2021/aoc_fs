@@ -333,13 +333,72 @@ type OptimizerNoopRemoval() =
         
 let cleanup = OptimizerNoopRemoval().Filter
 
-let program1 = eliminateConstants prodProgram
-let program2 = cleanup program1
 
-program2 |> List.map (fun p -> printfn $"{p}")
+type OptimizerDeadCodeElim () =
+    let isInstructionUsed (inst:Instruction) (used:Set<Register>) : bool*Set<Register> =
+        match inst with
+        | Inp reg -> true,used.Remove reg 
+        | Add (reg,Literal _) ->
+            used.Contains reg,used
+        | Add (reg,Reg other) ->
+            if used.Contains reg then true,used.Add(other)
+            else false,used 
+        | Mul (reg,Literal _) ->
+            used.Contains reg,used
+        | Mul (reg,Reg other) ->
+            if used.Contains reg then true,used.Add(other)
+            else false,used
+        | Div (reg,Literal _) ->
+            used.Contains reg, used
+        | Div (reg,Reg other) ->
+            true,used.Add(reg).Add(other) 
+        | Mod (reg,Literal n) ->
+            true,used.Add(reg)
+        | Mod (reg,Reg other) ->
+            true,used.Add(reg).Add(other)
+        | Eql (reg,Literal _) ->
+            used.Contains reg,used
+        | Eql (reg,Reg other) ->
+            if used.Contains reg then
+                true,used.Add(other)
+            else false,used
+        | XSet (reg,value) ->
+            used.Contains(reg),used.Remove reg 
+        | XSetR (reg,other) ->
+            if used.Contains(reg) then true,used.Remove(reg).Add(other)
+            else false,used 
+        | XZero reg -> used.Contains(reg),used.Remove(reg)
+        | XNoop -> false,used 
+        
+        
+    member this.UnusedToNoops (program:Program) =
+        let rec process (used:Set<Register>) (program:Program) : Program =
+            match program with
+            | [] -> []
+            | inst::rest ->
+                let inUse,used = isInstructionUsed inst used
+                let inst = if inUse then inst else XNoop
+                inst :: (process used rest) 
+        let program = program |> List.rev
+        let init = Set.empty.Add(Z) // Z is used as the final eval
+        let program = process init program
+        let program = program |> List.rev
+        program 
+
+let eliminateDeadCode : Program -> Program = OptimizerDeadCodeElim().UnusedToNoops
 
 
+let program = prodProgram 
+let optimize (program:Program) : Program  =
+    program
+    |> eliminateConstants 
+    |> cleanup
+    |> eliminateDeadCode
+    |> cleanup 
+              
+program |> optimize |> List.map (fun p -> printfn $"{p}")
 
-let result = exec ALU.empty program2
+
+// let result = exec ALU.empty program
 // printfn $"result = {result}"
 
