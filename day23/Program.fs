@@ -1,5 +1,5 @@
 type Cost = uint64
-type Pos = int*int 
+type Pos = int * int
 
 type Amp =
     | A
@@ -12,34 +12,38 @@ type Amp =
         | B -> 'B'
         | C -> 'C'
         | D -> 'D'
-    member this.Cost : Cost =
+
+    member this.Cost: Cost =
         match this with
         | A -> 1UL
         | B -> 10UL
         | C -> 100UL
         | D -> 1000UL
-    
+
     member this.Column =
         match this with
         | A -> 2
         | B -> 4
         | C -> 6
         | D -> 8
-    member this.HexValue : uint64 =
-        match this with 
+
+    member this.HexValue: uint64 =
+        match this with
         | A -> 1UL
         | B -> 2UL
         | C -> 4UL
         | D -> 8UL
-    member this.HexComplement : uint64 =
+
+    member this.HexComplement: uint64 =
         match this with
         | A -> 0xFUL ^^^ 1UL
         | B -> 0xFUL ^^^ 2UL
         | C -> 0xFUL ^^^ 4UL
         | D -> 0xFUL ^^^ 8UL
-    member this.Mask : uint64 = 0xFUL
-    member this.ComplementMask : uint64 = 0xFUL ^^^ 0UL
-        
+
+    member this.Mask: uint64 = 0xFUL
+    member this.ComplementMask: uint64 = 0xFUL ^^^ 0UL
+
 let testInput = [ (B, A); (C, D); (B, C); (D, A) ]
 let prodInput = [ (D, D); (A, C); (C, B); (A, B) ]
 
@@ -80,7 +84,7 @@ let walkCost ((x1, y1): Pos) ((x2, y2): Pos) = abs (x1 - x2) + abs (y2 - y1)
 type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, depth: int) =
     member this.Amps = amps
     member this.Cost = cost
-    member this.Moves = moves
+    member this.Moves() = moves |> List.rev
 
     member this.MemoKey: string =
         allCoordinates
@@ -236,23 +240,28 @@ type Burrow(amps: Map<Pos, Amp>, cost: Cost, moves: List<Pos * Pos * Cost>, dept
                                                 ((8, 3), D)
                                                 ((8, 4), D) ]
 
-let toBurrowMap (burrow:Burrow) =
-    let ampToChar (amp:Amp) = amp.AsChar 
-    let toChar (pos:Pos) : char =
-        if (fst pos) = 12 then '\n'
+let toBurrowMap (burrow: Burrow) =
+    let ampToChar (amp: Amp) = amp.AsChar
+
+    let toChar (pos: Pos) : char =
+        if (fst pos) = 12 then
+            '\n'
         elif allCoordinates.Contains pos then
             burrow.Amps.TryFind pos
             |> Option.map ampToChar
             |> Option.defaultValue '.'
-        else '█'
-    Array.allPairs [|-1..5|] [|-1..12|]
-    |> Array.map (fun (y,x) -> (x,y))
+        else
+            '█'
+
+    Array.allPairs [| -1 .. 5 |] [| -1 .. 12 |]
+    |> Array.map (fun (y, x) -> (x, y))
     |> Array.map toChar
     |> System.String
 
-let printBurrow (burrow:Burrow) =     
+let printBurrow (burrow: Burrow) =
     let map = toBurrowMap burrow
     printfn $"Burrow:\n{map}"
+
 type Memo(memo: Map<string, Cost>, best: Option<Burrow>) =
     member this.Map = memo
     member this.Best = best
@@ -327,9 +336,10 @@ let findNexts (burrow: Burrow) : List<Burrow> =
         [ burrow ]
     else
         let roomies = burrow.MovableRoomAmps()
+
         if roomies.IsEmpty then
             printfn "No more moves for:"
-            printBurrow burrow 
+            printBurrow burrow
 
         let roomieMoves =
             roomies
@@ -374,12 +384,9 @@ let final = memo.Best |> Option.get
 printfn $"best cost {final.Cost}"
 
 printfn $"moves: "
-final.Moves |> List.map (fun p -> printfn $"{p}")
+
+final.Moves()
+|> List.map (fun (start, finish, cost) -> printfn $"{start}->{finish} [{cost}]")
 
 printfn "test input, part 2: "
 toPart2Burrow testInput |> printBurrow
-
-// printBurrow initBurrow
-
-// printfn "Nexts: "
-// findNexts initBurrow |> List.map printBurrow 
