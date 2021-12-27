@@ -37,6 +37,10 @@ type Instruction =
     | Div of Register * Value
     | Mod of Register * Value
     | Eql of Register * Value
+    | XSet of Register * int64
+    | XSetR of Register * Register 
+    | XZero of Register
+    | XNoop
 
 type Program = list<Instruction>
 
@@ -93,6 +97,13 @@ type ALU(regs: Map<Register, int64>, inputs: int64) =
             let a = get (Reg reg)
             let b = get value
             Some(set reg (if a = b then 1L else 0L))
+        | XSet (reg,value) ->
+            Some (set reg value)
+        | XSetR (reg,other) ->
+            let value = get (Reg other)
+            Some (set reg value)
+        | XZero reg -> Some (set reg 0L)
+        | XNoop -> Some(this)
 
     static member empty = ALU(Map.empty, 0L)
 
@@ -201,6 +212,134 @@ let testProgram5 =
       Add(Y, Literal 0L)
       Div(X, Reg Y) ]
 
+type OptimizerState (regs: Map<Register,int64>) =
+   member this.Regs = regs
+   member this.SetDirty (reg:Register) : OptimizerState =
+       OptimizerState(regs.Remove reg)
+   member this.IsDirty : Register->bool = regs.ContainsKey >> not 
+   member this.IsClean = this.IsDirty >> not
+   
+   member this.GetValue = regs.TryFind
+   
+   member this.IsZero reg = regs.TryFind reg = Some(0L)
+   member this.IsOne reg = regs.TryFind reg = Some(1L) 
+   
+   member this.SetConst (reg:Register) (value:int64) : OptimizerState =
+       OptimizerState(regs.Add(reg,value))
+   static member fresh =
+       [(W,0L)
+        (X,0L)
+        (Y,0L)
+        (Z,0L)]
+       |> Map
+       |> OptimizerState
 
-let result = exec ALU.empty prodProgram
-printfn $"result = {result}"
+type OptimizerConstElim (state:OptimizerState) =
+    let dirty = state.SetDirty >> OptimizerConstElim
+    let isDirty = state.IsDirty
+    let isKnown = state.IsDirty >> not 
+    let setDirty = state.SetDirty >> OptimizerConstElim
+    let getKnown = state.GetValue >> Option.get
+    let isZero = state.IsZero
+    let isOne = state.IsOne 
+   
+    let setConst reg value = state.SetConst reg value |> OptimizerConstElim 
+    member this.State = state
+  
+    member this.MapConst (inst:Instruction) : Instruction*OptimizerConstElim =
+        match inst with
+        | Inp reg -> inst,(dirty reg)
+        | Add (_,Literal 0L) -> XNoop,this
+        | Add (reg,Literal _) when isDirty reg -> inst,this
+        | Add (reg,Literal i) ->
+            let value = getKnown reg + i 
+            let optimizer = setConst reg value
+            let inst = XSet (reg,value)
+            inst,optimizer
+        | Add (reg,Reg other) when isKnown other ->
+            let inst = Add (reg,Literal (getKnown other))
+            this.MapConst inst 
+        | Add (reg,Reg other) when isDirty other -> inst, setDirty reg
+        | Add (reg,Reg other) when isDirty reg -> Add (reg,Literal (getKnown other)),this
+        | Add (reg,Reg other) ->
+            let value = getKnown reg + getKnown other
+            XSet (reg,value),setConst reg value
+        | Mul (reg,Literal 0L) when isDirty reg -> XZero reg,setConst reg 0L 
+        | Mul (reg,Literal 0L) when getKnown reg = 0L -> XNoop,this
+        | Mul (reg,Literal 0L) -> XZero reg,setConst reg 0L
+        | Mul (_,Literal 1L) -> XNoop, this
+        | Mul (reg,Literal n) when isKnown reg ->
+            let value = getKnown reg * n
+            XSet (reg,value),setConst reg value
+        | Mul (_,Literal _) -> inst,this 
+        | Mul (reg,Reg other) when isKnown other ->
+            let inst = Mul(reg,Literal (getKnown other))
+            this.MapConst inst 
+        | Mul (reg,Reg _) when isDirty reg -> inst,this
+        | Mul (reg,_) when isZero reg -> XNoop,this
+        | Mul (reg,Reg other) when isOne reg -> XSetR (reg,other),setDirty reg
+        | Mul (reg,Reg _) -> inst,setDirty reg
+        | Div (_,Literal 1L) -> XNoop,this
+        | Div (reg,Literal n) when isKnown reg ->
+            let value = getKnown reg / n
+            XSet (reg,value), setConst reg value
+        | Div (_,Literal _) -> inst,this 
+        | Div (reg,Reg other) when isKnown other ->
+            let inst = Div (reg,Literal (getKnown other))
+            this.MapConst inst
+        | Div (reg,Reg _) -> inst,setDirty reg
+        | Mod (reg,Literal n) when isKnown reg ->
+            let value = getKnown reg % n
+            XSet (reg,value), setConst reg value
+        | Mod (_,Literal _) -> inst,this
+        | Mod (reg,Reg other) when isKnown other ->
+            let inst = Mod (reg,Literal (getKnown other))
+            this.MapConst inst
+        | Mod (reg,Reg _) -> inst,setDirty reg
+        | Eql (reg,Literal n) when isKnown reg ->
+            let value = if getKnown reg = n then 1L else 0L
+            XSet (reg,value),setConst reg value
+        | Eql (_,Literal _) -> inst,this     
+        | Eql (reg,Reg other) when isKnown other ->
+            let inst = Eql(reg,Literal (getKnown other))
+            this.MapConst inst
+        | Eql (reg,Reg _) -> inst,setDirty reg 
+         
+        | _ -> 
+            printfn $"Not handled: {inst} [state corrupt]"
+            inst,this 
+            
+    static member fresh = OptimizerState.fresh |> OptimizerConstElim 
+
+let eliminateConstants (program:Program) : Program =
+    let rec optimize (optimizer:OptimizerConstElim) (program:Program) =
+        match program with
+        | [] -> []
+        | inst::rest ->
+            let inst,optimizer = optimizer.MapConst inst
+            inst:: (optimize optimizer rest)
+    optimize OptimizerConstElim.fresh program 
+
+
+type OptimizerNoopRemoval() =
+    let isNoop (inst:Instruction) =
+        match inst with
+        | XNoop -> true
+        | Add (_,Literal 0L) -> true
+        | Mul (_,Literal 1L) -> true
+        | _ -> false
+    member this.Filter (program:Program) : Program =
+        program |> List.filter (isNoop >> not) 
+        
+let cleanup = OptimizerNoopRemoval().Filter
+
+let program1 = eliminateConstants prodProgram
+let program2 = cleanup program1
+
+program2 |> List.map (fun p -> printfn $"{p}")
+
+
+
+let result = exec ALU.empty program2
+// printfn $"result = {result}"
+
