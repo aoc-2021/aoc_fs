@@ -64,12 +64,16 @@ type ALU (regs:Map<Register,int64>) =
         | Div (reg, value) ->
             let a = get (Reg reg)
             let b = get value
-            if b = 0 then None
+            if b = 0 then
+                printfn $"Divide by Zero {reg}/{value}"
+                None
             else Some (set reg (a/b))
         | Mod (reg, value) ->
             let a = get (Reg reg)
             let b = get value
-            if a < 0L || b <= 0L then None 
+            if a < 0L || b <= 0L then
+                printfn $"Mod fail {reg}={a} {value}={b}"
+                None 
             else Some (set reg (a % b))
         | Eql (reg, value) ->
             let a = get (Reg reg)
@@ -94,7 +98,7 @@ let parseLine (line:string) =
     | [|"mul";reg;value|] -> Mul ((toReg reg),(toVal value))
     | [|"div";reg;value|] -> Div ((toReg reg),(toVal value))
     | [|"mod";reg;value|] -> Mod ((toReg reg),(toVal value))
-    | [|"eql";reg;value|] -> Mod ((toReg reg),(toVal value))
+    | [|"eql";reg;value|] -> Eql ((toReg reg),(toVal value))
     | _ -> failwith $"Cannot parse {line}"
  
 let parseFile (input:string[]) : list<Instruction> =
@@ -153,8 +157,13 @@ let myTestProgram4 =
      Mod (Z, Literal 3L)
      Div (Y, Reg X)
      Div (Y, Reg Z)]
-     
 
-let result = exec ALU.empty testProgram3
+let testProgram5 =
+    [Add (X,Literal -5L)
+     Add (Y,Literal 0L)
+     Div (X,Reg Y)]
+    
+
+let result = exec ALU.empty prodProgram
 printfn $"result = {result}"
         
