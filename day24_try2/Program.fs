@@ -588,111 +588,286 @@ printfn "All optimizations/code elimination over (at least for now)"
 
 let optimalProgram = program4
 
-type InputValue(values:Set<int64>,safe:bool) =
+type InputValue(values: Set<int64>, safe: bool) =
     member this.Values = values
     member this.Safe = safe
-    member this.SetRisky () = InputValue(values,false)
-    member this.Remove (i:int64) = InputValue(values.Remove i, safe)
-    member this.Contains = values.Contains 
-    member this.toList () = values |> Set.toList
-    static member fresh = (Set [1L..9L],true) |> InputValue
-    override this.ToString () =
-        let values = values |> Set.toList |> List.map string  |> String.concat ""
+    member this.SetRisky() = InputValue(values, false)
+    member this.Remove(i: int64) = InputValue(values.Remove i, safe)
+    member this.Contains = values.Contains
+    member this.toList() = values |> Set.toList
+    static member fresh = (Set [ 1L .. 9L ], true) |> InputValue
+
+    override this.ToString() =
+        let values =
+            values
+            |> Set.toList
+            |> List.map string
+            |> String.concat ""
+
         let danger = if safe then "" else "[!]"
         $"{{{values}{danger}}})"
 
-type InputValues (values:Map<int,InputValue>) =
+type InputValues(values: Map<int, InputValue>) =
     member this.Values = values
     member this.Value = values.TryFind >> Option.get
-    member this.NewInput () : int*InputValues =
+
+    member this.NewInput() : int * InputValues =
         let index = values.Count
-        let values = values.Add(index,InputValue.fresh)
-        index,InputValues(values)
+        let values = values.Add(index, InputValue.fresh)
+        index, InputValues(values)
+
     static member fresh = InputValues(Map.empty)
-    
 
-type Ref (index:int,value:int64) =
-    member this.Index = index
-    member this.Value = value 
-    override this.ToString () = $"#{index}:{value}#" 
 
-type InputDeps = List<Ref> 
-type DependentValue (value: int64, alternatives:List<InputDeps>) =
+type Ref = { Index: int; Value: int64 }
+
+type InputDeps = Set<Ref>
+
+type DependentValue(value: int64, alternatives: InputDeps, dirty: Set<int>) =
     member this.Value = value
     member this.Alternatives = alternatives
-    member this.Map (f:int64->int64) =
-        DependentValue (f value,alternatives)
-    static member directInputRef (index:int) (value:int64) = 
-        DependentValue(value,List.singleton (List.singleton (Ref(index,value))))
-    override this.ToString () =
-        let alts = alternatives |> List.map string |> String.concat "|"
-        $"<{value}⇦[{alts}]>"
+    member this.Dirty = dirty
 
-type DependentValues (values:list<DependentValue>) =
-    member this.Values = values
-    member this.Map (f:int64 -> int64) =
-        values |> List.map (fun value -> value.Map f) |> DependentValues 
+    member this.Map(f: int64 -> int64) =
+        DependentValue(f value, alternatives, dirty)
+
+    member this.Consolidate() =
+        let inputRefs =
+            alternatives
+            |> Set.toSeq
+            |> Seq.groupBy (fun ref -> ref.Index)
+            |> Seq.map (fun (index, refs) -> (index, refs |> Seq.length))
+            |> Seq.toList
+
+        let complete =
+            inputRefs |> List.filter (snd >> ((=) 9))
+
+        let incomplete = inputRefs |> List.filter (snd >> (<>) 9)
+
+        if complete.Length = 1
+           && incomplete.Length = 0
+           && dirty.IsEmpty then
+            DependentValue(value, Set.empty, dirty)
+        else
+            let shady = complete |> List.map fst |> Set
+            let dirty = Set.union dirty shady
+            let clean = incomplete |> List.map fst |> Set
+
+            let alternatives =
+                alternatives
+                |> Set.filter (fun ref -> clean.Contains ref.Index)
+
+            DependentValue(value, alternatives, dirty)
+
+    static member directInputRef (index: int) (value: int64) =
+        DependentValue(value, Set.singleton { Index = index; Value = value }, Set.empty)
+
+    override this.ToString() =
+        let alts =
+            alternatives
+            |> Set.toList
+            |> List.map string
+            |> String.concat "|"
+        let dirty =
+            dirty
+            |> Set.toList
+            |> List.map string
+            |> String.concat ","
         
-    static member ofFreshInput (i:int) : DependentValues =
-        [1L..9L]
+        $"<{value}⇦[{alts},~{dirty}~]>"
+
+type DependentValues(values: list<DependentValue>) =
+    member this.Values = values
+
+    member this.Map(f: int64 -> int64) =
+        values
+        |> List.map (fun value -> value.Map f)
+        |> DependentValues
+
+    member this.Merge (other: DependentValues) (binOp: int64 -> int64 -> int64) : DependentValues =
+        List.allPairs values other.Values
+        |> List.map
+            (fun (v1, v2) ->
+                let value = binOp v1.Value v2.Value
+
+                let deps =
+                    Set.union v1.Alternatives v2.Alternatives
+
+                let dirty = Set.union v1.Dirty v2.Dirty
+
+                DependentValue(value, deps, dirty))
+        |> DependentValues
+        |> (fun dv -> dv.Consolidate())
+
+    member this.Consolidate() =
+        values
+        |> List.groupBy (fun v -> v.Value)
+        |> List.map
+            (fun (value, depVals) ->
+                let deps =
+                    depVals
+                    |> List.map (fun depVal -> depVal.Alternatives)
+                    |> Set.unionMany
+
+                let dirty =
+                    depVals
+                    |> List.map (fun depVal -> depVal.Dirty)
+                    |> Set.unionMany
+
+                DependentValue(value, deps, dirty).Consolidate())
+        |> DependentValues
+
+    static member ofFreshInput(i: int) : DependentValues =
+        [ 1L .. 9L ]
         |> List.map (fun value -> DependentValue.directInputRef i value)
         |> DependentValues
-   
-    override this.ToString () =
-        let vals = values |> List.map string |> String.concat ","
-        $"『 {vals} 』"    
+
+    override this.ToString() =
+        let vals =
+            values |> List.map string |> String.concat ","
+
+        $"『 {vals} 』"
 
 type RuntimeValue =
     | Deps of DependentValues
-    | Const of int64 
+    | Const of int64
 
-let findInputs (program:Program) : InputValues =
-    let rec eval (regs:Map<Reg,RuntimeValue>) (inputs:InputValues) (program:Program) : InputValues =
-        let get = regs.TryFind >> Option.get 
+let findInputs (program: Program) : InputValues =
+    let rec eval (regs: Map<Reg, RuntimeValue>) (inputs: InputValues) (program: Program) : InputValues =
+        let get = regs.TryFind >> Option.get
+
         match program with
-        | [] -> inputs 
-        | inst::rest ->
+        | [] -> inputs
+        | inst :: rest ->
             match inst with
-            | Inst(INP,reg,_) ->
-                let index,inputs = inputs.NewInput()
+            | Inst (INP, reg, _) ->
+                let index, inputs = inputs.NewInput()
                 let depVals = DependentValues.ofFreshInput index
-                let regs = regs.Add(reg,Deps depVals)
+                let regs = regs.Add(reg, Deps depVals)
                 printfn $"INP: {reg} <- {depVals}"
                 eval regs inputs rest
-            | Inst(ADD,reg,I i) ->
-                 let value = match get reg with
-                             | Const c -> Const (c+i)
-                             | Deps deps -> Deps (deps.Map (fun c -> c + i))
-                 let regs = regs.Add(reg,value)
-                 printfn $"ADD: {reg} <- {value}"
-                 eval regs inputs rest
-                 
-            | Inst(Xset,reg,I value) ->
-                let regs = regs.Add(reg,Const value)
+            | Inst (ADD, reg, I i) ->
+                let value =
+                    match get reg with
+                    | Const c -> Const(c + i)
+                    | Deps deps -> Deps(deps.Map(fun c -> c + i))
+
+                let regs = regs.Add(reg, value)
+                printfn $"ADD: {reg} <- {value}"
+                eval regs inputs rest
+            | Inst (ADD, reg, R other) ->
+                let v1 = get reg
+                let v2 = get other
+
+                let value =
+                    match v1, v2 with
+                    | Const c1, Const c2 -> Const(c1 + c2)
+                    | Const c1, Deps d2 -> Deps(d2.Map((+) c1))
+                    | Deps d1, Const c2 -> Deps(d1.Map((+) c2))
+                    | Deps d1, Deps d2 -> Deps(d1.Merge d2 (+))
+
+                let regs = regs.Add(reg, value)
+                printfn $"ADD: {reg} <- {value}"
+                eval regs inputs rest
+
+            | Inst (MUL, reg, I i) ->
+                let value =
+                    match get reg with
+                    | Const c -> Const(c * i)
+                    | Deps deps -> Deps(deps.Map(fun c -> c * i))
+
+                let regs = regs.Add(reg, value)
+                printfn $"MUL: {reg} <- {value}"
+                eval regs inputs rest
+
+            | Inst (MUL, reg, R other) ->
+                let v1 = get reg
+                let v2 = get other
+
+                let value =
+                    match v1, v2 with
+                    | Const c1, Const c2 -> Const(c1 * c2)
+                    | Const c1, Deps d2 -> Deps(d2.Map((*) c1))
+                    | Deps d1, Const c2 -> Deps(d1.Map((*) c2))
+                    | Deps d1, Deps d2 -> Deps(d1.Merge d2 (*))
+
+                let regs = regs.Add(reg, value)
+                printfn $"MUL: {reg} <- {value}"
+                eval regs inputs rest
+
+            | Inst (DIV, reg, I i) ->
+                let value =
+                    match get reg with
+                    | Const c -> Const(c / i)
+                    | Deps deps -> Deps(deps.Map(fun c -> c / i))
+
+                let regs = regs.Add(reg, value)
+                printfn $"DIV: {reg} <- {value}"
+                eval regs inputs rest
+
+
+            | Inst (MOD, reg, I i) ->
+                let value =
+                    match get reg with
+                    | Const c -> Const(c % i)
+                    | Deps deps ->
+                        // todo - remove <0
+                        Deps(deps.Map(fun c -> c % i))
+
+                let regs = regs.Add(reg, value)
+                printfn $"MOD: {reg} <- {value}"
+                eval regs inputs rest
+
+            | Inst (EQL, reg, I i) ->
+                let eql a b = if a = b then 1L else 0L
+
+                let value =
+                    match get reg with
+                    | Const c -> Const(c + i)
+                    | Deps deps -> Deps(deps.Map(fun c -> eql c i))
+
+                let regs = regs.Add(reg, value)
+                printfn $"EQL: {reg} <- {value}"
+                eval regs inputs rest
+
+            | Inst (EQL, reg, R other) ->
+                let eql a b = if a = b then 1L else 0L
+                let v1 = get reg
+                let v2 = get other
+
+                let value =
+                    match v1, v2 with
+                    | Const c1, Const c2 -> Const(eql c1 c2)
+                    | Const c1, Deps d2 -> Deps(d2.Map(eql c1))
+                    | Deps d1, Const c2 -> Deps(d1.Map(eql c2))
+                    | Deps d1, Deps d2 -> Deps(d1.Merge d2 eql)
+
+                let regs = regs.Add(reg, value)
+                printfn $"EQL: {reg} <- {value}"
+                eval regs inputs rest
+
+            | Inst (Xset, reg, I value) ->
+                let regs = regs.Add(reg, Const value)
                 printfn $"Xset: {reg} <- {value}"
                 eval regs inputs rest
-            | Inst(XsetR,reg,R other) ->
+            | Inst (XsetR, reg, R other) ->
                 let value = get other
-                let regs = regs.Add(reg,value)
+                let regs = regs.Add(reg, value)
                 printfn $"XsetR: {reg} <- {value}"
-                eval regs inputs rest 
-                
-            
+                eval regs inputs rest
+
             | _ ->
                 printfn $"Unhandled: {inst}"
-                inputs 
-    
-    
-    
-    
-    let regs = [(W,Const 0L)
-                (X,Const 0L)
-                (Y,Const 0L)
-                (Z,Const 0L)] |> Map 
-    let inputs = InputValues.fresh
-    eval regs inputs program 
-    
-let canidateInputs = findInputs optimalProgram                
-                
-    
+                inputs
 
+    let regs =
+        [ (W, Const 0L)
+          (X, Const 0L)
+          (Y, Const 0L)
+          (Z, Const 0L) ]
+        |> Map
+
+    let inputs = InputValues.fresh
+    eval regs inputs program
+
+let canidateInputs = findInputs optimalProgram
