@@ -353,16 +353,6 @@ type QState = Map<Reg, QValue>
 
 let quantumOptimize (program: Program) =
     let rec eval (state: QState) (program: Program) =
-        let isVals (reg: Reg) : bool =
-            match state.TryFind reg |> Option.get with
-            | Vals _ -> true
-            | TooMany -> false
-
-        let isInfinite (reg: Reg) : bool =
-            match state.TryFind reg |> Option.get with
-            | Vals _ -> false
-            | TooMany -> true
-
         let isSingle (reg: Reg) =
             state.TryFind reg
             |> Option.get
@@ -506,3 +496,76 @@ let program2 = quantumOptimize program1
 printfn ""
 printfn "** Quantum optimized: **"
 program2 |> List.map (printfn "%A")
+
+// quantum optimization done, time to move on to dead code
+
+
+let eliminateDeadCode (program: Program) =
+    let rec eval (deps: Set<Reg>) (program: Program) =
+        let unused = deps.Contains >> not
+
+        match program with
+        | [] -> []
+        | inst :: rest ->
+            match inst with
+            | Inst (INP, reg, _) ->
+                let deps = deps.Remove reg
+                inst :: (eval deps rest)
+            | Inst (ADD, reg, _) when unused reg -> eval deps rest
+            | Inst (ADD, _, I _) -> inst :: (eval deps rest)
+            | Inst (ADD, _, R other) ->
+                let deps = deps.Add other
+                inst :: (eval deps rest)
+            | Inst (MUL, reg, _) when unused reg -> eval deps rest
+            | Inst (MUL, _, I _) -> inst :: (eval deps rest)
+            | Inst (MUL, _, R other) ->
+                let deps = deps.Add other
+                inst :: (eval deps rest)
+            | Inst (DIV, reg, I _) when unused reg -> eval deps rest
+            | Inst (DIV, reg, R other) when unused reg ->
+                // leave the instruction in to get a zero check on the argument, but do
+                // not add reg to used, will then use whatever happens to be in the registry instead
+                // However, add the argument to deps
+                let deps = deps.Add other
+                inst :: eval deps rest
+            | Inst (DIV, _, I _) -> inst :: (eval deps rest)
+            | Inst (DIV, _, R other) ->
+                let deps = deps.Add other
+                inst :: (eval deps rest)
+            | Inst (MOD, reg, I _) ->
+                let deps = deps.Add reg // need it to check that it's valid
+                inst :: eval deps rest
+            | Inst (MOD, reg, R other) ->
+                let deps = deps.Add(reg).Add(other) // need it to check it's valid
+                inst :: eval deps rest
+            | Inst (EQL, reg, _) when unused reg -> eval deps rest
+            | Inst (EQL, _, I _) -> inst :: (eval deps rest)
+            | Inst (EQL, _, R other) ->
+                let deps = deps.Add other
+                inst :: (eval deps rest)
+            | Inst (Xset,reg,I _) when unused reg ->
+                eval deps rest
+            | Inst (Xset,reg,I _) ->
+                let deps = deps.Remove reg
+                inst :: (eval deps rest)
+            | Inst (XsetR,reg,R _) when unused reg ->
+                eval deps rest 
+            | Inst (XsetR,reg,R other) ->
+                let deps = deps.Remove reg
+                let deps = deps.Add other
+                inst :: (eval deps rest) 
+            | _ ->
+                printfn $"Not implemented: {inst} [corrupt]"
+                inst :: (eval deps rest)
+
+    let initDeps = Set.singleton Z
+    program |> List.rev |> (eval initDeps) |> List.rev
+
+let program3 = eliminateDeadCode program2
+
+printfn ""
+printfn "Eliminated dead code: "
+printfn ""
+program3 |> List.map (printfn "%A")
+
+printfn $"Code elimination: {program.Length} -> {program1.Length} -> {program2.Length} -> {program3.Length}"
