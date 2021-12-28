@@ -3,7 +3,7 @@ open System.IO
 let file =
     File.ReadAllLines "input.txt" |> Array.toList
 
-file |> List.map (fun f -> printfn $"{f}")
+// file |> List.map (fun f -> printfn $"{f}")
 
 type Op =
     | INP
@@ -93,7 +93,7 @@ let parseLine (line: string) =
 
 let program = file |> List.map parseLine
 
-program |> List.map (printfn "%A")
+// program |> List.map (printfn "%A")
 
 let rec constElim (program: Program) : Program =
     let rec elim (state: Map<Reg, int64>) (program: Program) : Program =
@@ -143,6 +143,7 @@ let rec constElim (program: Program) : Program =
                 let inst = Inst(Xset, reg, I value)
                 let state = state.Add(reg, value)
                 inst :: (elim state rest)
+            | Inst (MUL, _, I _) -> inst :: (elim state rest)
             | Inst (MUL, reg, R _) when isZero reg -> elim state rest
             | Inst (MUL, reg, R other) when isOne reg ->
                 let inst = Inst(XsetR, reg, R other)
@@ -192,6 +193,16 @@ let rec constElim (program: Program) : Program =
             | Inst (EQL, reg, R _) ->
                 let state = state.Remove(reg)
                 inst :: (elim state rest)
+            | Inst (Xset, reg, I i) ->
+                let state = state.Add(reg, i)
+                inst :: (elim state rest)
+            | Inst (XsetR, reg, R other) when isKnown other ->
+                let state = state.Add(reg, get other)
+                let inst = Inst(Xset, reg, I(get other))
+                inst :: (elim state rest)
+            | Inst (XsetR, reg, R _) ->
+                let state = state.Remove(reg)
+                inst :: (elim state rest)
             | inst ->
                 printfn $"Unhandled instruction: {inst} [corrupt]"
                 inst :: (elim state rest)
@@ -206,7 +217,7 @@ let program1 = constElim program
 printfn $"{program.Length} -> {program1.Length}"
 
 printfn "Removed constants: "
-program1 |> List.map (printfn "%A")
+// program1 |> List.map (printfn "%A")
 
 // constants gone, lets continue
 
@@ -495,7 +506,7 @@ let program2 = quantumOptimize program1
 
 printfn ""
 printfn "** Quantum optimized: **"
-program2 |> List.map (printfn "%A")
+// program2 |> List.map (printfn "%A")
 
 // quantum optimization done, time to move on to dead code
 
@@ -543,17 +554,15 @@ let eliminateDeadCode (program: Program) =
             | Inst (EQL, _, R other) ->
                 let deps = deps.Add other
                 inst :: (eval deps rest)
-            | Inst (Xset,reg,I _) when unused reg ->
-                eval deps rest
-            | Inst (Xset,reg,I _) ->
+            | Inst (Xset, reg, I _) when unused reg -> eval deps rest
+            | Inst (Xset, reg, I _) ->
                 let deps = deps.Remove reg
                 inst :: (eval deps rest)
-            | Inst (XsetR,reg,R _) when unused reg ->
-                eval deps rest 
-            | Inst (XsetR,reg,R other) ->
+            | Inst (XsetR, reg, R _) when unused reg -> eval deps rest
+            | Inst (XsetR, reg, R other) ->
                 let deps = deps.Remove reg
                 let deps = deps.Add other
-                inst :: (eval deps rest) 
+                inst :: (eval deps rest)
             | _ ->
                 printfn $"Not implemented: {inst} [corrupt]"
                 inst :: (eval deps rest)
@@ -566,6 +575,124 @@ let program3 = eliminateDeadCode program2
 printfn ""
 printfn "Eliminated dead code: "
 printfn ""
-program3 |> List.map (printfn "%A")
 
-printfn $"Code elimination: {program.Length} -> {program1.Length} -> {program2.Length} -> {program3.Length}"
+let program4 = constElim program3
+
+program4 |> List.map (printfn "%A")
+
+printfn
+    $"Code elimination: {program.Length} -> {program1.Length} -> {program2.Length} -> {program3.Length} -> {program4.Length}"
+
+
+printfn "All optimizations/code elimination over (at least for now)"
+
+let optimalProgram = program4
+
+type InputValue(values:Set<int64>,safe:bool) =
+    member this.Values = values
+    member this.Safe = safe
+    member this.SetRisky () = InputValue(values,false)
+    member this.Remove (i:int64) = InputValue(values.Remove i, safe)
+    member this.Contains = values.Contains 
+    member this.toList () = values |> Set.toList
+    static member fresh = (Set [1L..9L],true) |> InputValue
+    override this.ToString () =
+        let values = values |> Set.toList |> List.map string  |> String.concat ""
+        let danger = if safe then "" else "[!]"
+        $"{{{values}{danger}}})"
+
+type InputValues (values:Map<int,InputValue>) =
+    member this.Values = values
+    member this.Value = values.TryFind >> Option.get
+    member this.NewInput () : int*InputValues =
+        let index = values.Count
+        let values = values.Add(index,InputValue.fresh)
+        index,InputValues(values)
+    static member fresh = InputValues(Map.empty)
+    
+
+type Ref (index:int,value:int64) =
+    member this.Index = index
+    member this.Value = value 
+    override this.ToString () = $"#{index}:{value}#" 
+
+type InputDeps = List<Ref> 
+type DependentValue (value: int64, alternatives:List<InputDeps>) =
+    member this.Value = value
+    member this.Alternatives = alternatives
+    member this.Map (f:int64->int64) =
+        DependentValue (f value,alternatives)
+    static member directInputRef (index:int) (value:int64) = 
+        DependentValue(value,List.singleton (List.singleton (Ref(index,value))))
+    override this.ToString () =
+        let alts = alternatives |> List.map string |> String.concat "|"
+        $"<{value}⇦[{alts}]>"
+
+type DependentValues (values:list<DependentValue>) =
+    member this.Values = values
+    member this.Map (f:int64 -> int64) =
+        values |> List.map (fun value -> value.Map f) |> DependentValues 
+        
+    static member ofFreshInput (i:int) : DependentValues =
+        [1L..9L]
+        |> List.map (fun value -> DependentValue.directInputRef i value)
+        |> DependentValues
+   
+    override this.ToString () =
+        let vals = values |> List.map string |> String.concat ","
+        $"『 {vals} 』"    
+
+type RuntimeValue =
+    | Deps of DependentValues
+    | Const of int64 
+
+let findInputs (program:Program) : InputValues =
+    let rec eval (regs:Map<Reg,RuntimeValue>) (inputs:InputValues) (program:Program) : InputValues =
+        let get = regs.TryFind >> Option.get 
+        match program with
+        | [] -> inputs 
+        | inst::rest ->
+            match inst with
+            | Inst(INP,reg,_) ->
+                let index,inputs = inputs.NewInput()
+                let depVals = DependentValues.ofFreshInput index
+                let regs = regs.Add(reg,Deps depVals)
+                printfn $"INP: {reg} <- {depVals}"
+                eval regs inputs rest
+            | Inst(ADD,reg,I i) ->
+                 let value = match get reg with
+                             | Const c -> Const (c+i)
+                             | Deps deps -> Deps (deps.Map (fun c -> c + i))
+                 let regs = regs.Add(reg,value)
+                 printfn $"ADD: {reg} <- {value}"
+                 eval regs inputs rest
+                 
+            | Inst(Xset,reg,I value) ->
+                let regs = regs.Add(reg,Const value)
+                printfn $"Xset: {reg} <- {value}"
+                eval regs inputs rest
+            | Inst(XsetR,reg,R other) ->
+                let value = get other
+                let regs = regs.Add(reg,value)
+                printfn $"XsetR: {reg} <- {value}"
+                eval regs inputs rest 
+                
+            
+            | _ ->
+                printfn $"Unhandled: {inst}"
+                inputs 
+    
+    
+    
+    
+    let regs = [(W,Const 0L)
+                (X,Const 0L)
+                (Y,Const 0L)
+                (Z,Const 0L)] |> Map 
+    let inputs = InputValues.fresh
+    eval regs inputs program 
+    
+let canidateInputs = findInputs optimalProgram                
+                
+    
+
