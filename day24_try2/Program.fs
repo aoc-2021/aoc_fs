@@ -310,8 +310,29 @@ type QValue =
                 let pairs = List.allPairs v1 v2
                 let mods = pairs |> List.map (fun (a, b) -> a % b)
                 Vals(mods |> Set)
-    
-    member this.Filter (filter:int64 -> bool) =
+
+    member this.Eq(i: int64) =
+        match this with
+        | TooMany -> [ 0L; 1L ] |> Set |> Vals
+        | Vals v1 ->
+            v1
+            |> Set.map (fun v -> if v = i then 1L else 0L)
+            |> Vals
+
+    member this.QEq(other: QValue) =
+        match this, other with
+        | TooMany, _ -> [ 0L; 1L ] |> Set |> Vals
+        | _, TooMany -> [ 0L; 1L ] |> Set |> Vals
+        | Vals v1, Vals v2 ->
+            let v1 = v1 |> Set.toList
+            let v2 = v2 |> Set.toList
+
+            List.allPairs v1 v2
+            |> List.map (fun (a, b) -> if a = b then 1L else 0L)
+            |> Set
+            |> Vals
+
+    member this.Filter(filter: int64 -> bool) =
         match this with
         | TooMany -> TooMany
         | Vals v1 -> v1 |> Set.filter filter |> Vals
@@ -332,17 +353,17 @@ type QState = Map<Reg, QValue>
 
 let quantumOptimize (program: Program) =
     let rec eval (state: QState) (program: Program) =
-        let isVals (reg:Reg) : bool =
+        let isVals (reg: Reg) : bool =
             match state.TryFind reg |> Option.get with
             | Vals _ -> true
             | TooMany -> false
 
-        let isInfinite (reg:Reg) : bool =
+        let isInfinite (reg: Reg) : bool =
             match state.TryFind reg |> Option.get with
             | Vals _ -> false
             | TooMany -> true
 
-        let isSingle (reg:Reg) =
+        let isSingle (reg: Reg) =
             state.TryFind reg
             |> Option.get
             |> (fun v -> v.IsSingle)
@@ -376,6 +397,12 @@ let quantumOptimize (program: Program) =
                 let regv = regv.Add value
                 let state = state.Add(reg, regv)
                 inst :: (eval state rest)
+            | Inst (ADD, reg, R other) ->
+                let v1 = get reg
+                let v2 = get other
+                let value = v1.QAdd v2
+                let state = state.Add(reg, value)
+                inst :: (eval state rest)
             | Inst (MUL, reg, I value) when isSingle reg ->
                 let value = (getSingle reg) * value
                 let inst = Inst(Xset, reg, I value)
@@ -405,9 +432,9 @@ let quantumOptimize (program: Program) =
             | Inst (DIV, reg, R other) ->
                 let v1 = get reg
                 let v2 = get other
-                let v2 = v2.Filter ((<>) 0L)
+                let v2 = v2.Filter((<>) 0L)
                 let value = v1.QDiv v2
-                let state = state.Add(reg,value).Add(other,v2)
+                let state = state.Add(reg, value).Add(other, v2)
                 inst :: (eval state rest)
             | Inst (MOD, reg, I i) when isSingle reg ->
                 let value = (getSingle reg) % i
@@ -416,26 +443,52 @@ let quantumOptimize (program: Program) =
                 inst :: (eval state rest)
             | Inst (MOD, reg, I i) ->
                 let regv = get reg
-                let regv = regv.Filter ((<=) 0L)
+                let regv = regv.Filter((<=) 0L)
                 let regv = regv.Mod i
                 let state = state.Add(reg, regv)
                 inst :: (eval state rest)
             | Inst (MOD, reg, R other) ->
                 let v1 = get reg
-                let v1 = v1.Filter ((<=) 0L)
+                let v1 = v1.Filter((<=) 0L)
                 let v2 = get other
-                let v2 = v2.Filter ((<) 0L)
+                let v2 = v2.Filter((<) 0L)
                 let value = v1.QMod v2
-                let state = state.Add(reg,value).Add(other,v2)
+                let state = state.Add(reg, value).Add(other, v2)
                 inst :: (eval state rest)
-            
-            | Inst (Xset,reg,I i) ->
-                let state = state.Add(reg,QValue.singleton i)
+            | Inst (EQL, reg, I i) ->
+                let value = get reg
+                let value = value.Eq i
+
+                if value.IsSingle then
+                    let inst =
+                        Inst(Xset, reg, I(value.GetSingleValue()))
+
+                    let state = state.Add(reg, value)
+                    inst :: (eval state rest)
+                else
+                    let state = state.Add(reg, value)
+                    inst :: (eval state rest)
+            | Inst (EQL, reg, R other) ->
+                let v1 = get reg
+                let v2 = get other
+                let value = v1.QEq v2
+
+                if value.IsSingle then
+                    let inst =
+                        Inst(Xset, reg, I(value.GetSingleValue()))
+
+                    let state = state.Add(reg, value)
+                    inst :: (eval state rest)
+                else
+                    let state = state.Add(reg, value)
+                    inst :: (eval state rest)
+            | Inst (Xset, reg, I i) ->
+                let state = state.Add(reg, QValue.singleton i)
                 inst :: (eval state rest)
-            | Inst (XsetR,reg,R other) ->
-                let state = state.Add(reg,get other)
+            | Inst (XsetR, reg, R other) ->
+                let state = state.Add(reg, get other)
                 inst :: (eval state rest)
-            | _ ->         
+            | _ ->
                 printfn $"Not implemented: {inst} [corrupt]"
                 inst :: (eval state rest)
 
