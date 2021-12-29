@@ -668,12 +668,13 @@ type DependentValue(value: int64, alternatives: InputDeps, dirty: Set<int>) =
             |> Set.toList
             |> List.map string
             |> String.concat "|"
+
         let dirty =
             dirty
             |> Set.toList
             |> List.map string
             |> String.concat ","
-        
+
         $"<{value}⇦[{alts},~{dirty}~]>"
 
 type DependentValues(values: list<DependentValue>) =
@@ -870,4 +871,509 @@ let findInputs (program: Program) : InputValues =
     let inputs = InputValues.fresh
     eval regs inputs program
 
-let canidateInputs = findInputs optimalProgram
+// let canidateInputs = findInputs optimalProgram
+
+// well, that was fail, lets try again
+// starting point is still: optimalProgram
+
+
+type AST =
+    | A_INPUT of int // *Set<int64>
+    | A_CONST of int64
+    | A_ADD of AST * AST
+    | A_MUL of AST * AST
+    | A_DIV of AST * AST
+    | A_MOD of AST * AST
+    | A_EQL of AST * AST
+
+let parseToAST (program: Program) : AST =
+    let _1to9 = [ 1L .. 9L ] |> Set
+
+    let rec eval (regs: Map<Reg, AST>) (program: Program) (inputs: int) =
+        let get = regs.TryFind >> Option.get
+        let set reg value = regs.Add(reg, value)
+
+        match program with
+        | [] -> get Z
+        | inst :: rest ->
+            match inst with
+            | Inst (INP, reg, _) ->
+                let regs = set reg (A_INPUT(inputs)) // ,_1to9))
+                let inputs = inputs + 1
+                eval regs rest inputs
+            | Inst (ADD, reg, I i) ->
+                let a = get reg
+                let b = A_CONST i
+                let ast = A_ADD(a, b)
+                let regs = set reg ast
+                eval regs rest inputs
+            | Inst (ADD, reg, R other) ->
+                let a = get reg
+                let b = get other
+                let ast = A_ADD(a, b)
+                let regs = set reg ast
+                eval regs rest inputs
+            | Inst (MUL, reg, I i) ->
+                let a = get reg
+                let b = A_CONST i
+                let regs = set reg (A_MUL(a, b))
+                eval regs rest inputs
+            | Inst (MUL, reg, R other) ->
+                let a = get reg
+                let b = get other
+                let regs = set reg (A_MUL(a, b))
+                eval regs rest inputs
+            | Inst (DIV, reg, I i) ->
+                let a = get reg
+                let b = A_CONST i
+                let regs = set reg (A_DIV(a, b))
+                eval regs rest inputs
+            | Inst (DIV, reg, R other) ->
+                let a = get reg
+                let b = get other
+                let regs = set reg (A_DIV(a, b))
+                eval regs rest inputs
+            | Inst (MOD, reg, I i) ->
+                let a = get reg
+                let b = A_CONST i
+                let regs = set reg (A_MOD(a, b))
+                eval regs rest inputs
+            | Inst (MOD, reg, R other) ->
+                let a = get reg
+                let b = get other
+                let regs = set reg (A_MOD(a, b))
+                eval regs rest inputs
+            | Inst (EQL, reg, I i) ->
+                let a = get reg
+                let b = A_CONST i
+                let regs = set reg (A_EQL(a, b))
+                eval regs rest inputs
+            | Inst (EQL, reg, R other) ->
+                let a = get reg
+                let b = get other
+                let regs = set reg (A_EQL(a, b))
+                eval regs rest inputs
+            | Inst (Xset, reg, I i) ->
+                let regs = set reg (A_CONST i)
+                eval regs rest inputs
+            | Inst (XsetR, reg, R other) ->
+                let value = get other
+                let regs = set reg value
+                eval regs rest inputs
+
+            | _ ->
+                printfn $"NOT IMPLEMENTED {inst}"
+                printfn $"{regs}"
+                get Z
+
+    let initRegs =
+        [ (W, A_CONST 0L)
+          (X, A_CONST 0L)
+          (Y, A_CONST 0L)
+          (Z, A_CONST 0L) ]
+        |> Map
+
+    eval initRegs program 0
+
+let rec sizeOfAST (ast: AST) =
+    match ast with
+    | A_INPUT _ -> 1
+    | A_CONST _ -> 1
+    | A_ADD (a, b) -> 1 + (sizeOfAST a) + (sizeOfAST b)
+    | A_MUL (a, b) -> 1 + (sizeOfAST a) + (sizeOfAST b)
+    | A_DIV (a, b) -> 1 + (sizeOfAST a) + (sizeOfAST b)
+    | A_MOD (a, b) -> 1 + (sizeOfAST a) + (sizeOfAST b)
+    | A_EQL (a, b) -> 1 + (sizeOfAST a) + (sizeOfAST b)
+
+
+// let ast = parseToAST optimalProgram
+// let astSize = sizeOfAST ast
+
+printfn "AST: "
+// printfn $"{ast}"
+// printfn $"Size :{astSize}"
+
+let rec pushMulDown (ast: AST) =
+    match ast with
+    | A_INPUT _ -> ast
+    | A_CONST _ -> ast
+    | A_ADD (a, b) -> A_ADD(pushMulDown a, pushMulDown b)
+    | A_MUL (a, b) ->
+        let a = pushMulDown a
+        let b = pushMulDown b
+
+        match a, b with
+        | (A_ADD (a, b), c) -> A_ADD(A_MUL(a, c), A_MUL(b, c)) |> pushMulDown
+        | (a, A_ADD (b, c)) -> A_ADD(A_MUL(a, b), A_MUL(b, c)) |> pushMulDown
+        | (a, b) -> A_MUL(a, b)
+    | A_DIV (a, b) -> A_DIV(pushMulDown a, pushMulDown b)
+    | A_MOD (a, b) -> A_MOD(pushMulDown a, pushMulDown b)
+    | A_EQL (a, b) -> A_EQL(pushMulDown a, pushMulDown b)
+
+// let ast2 = pushMulDown ast
+
+// printfn $"{ast2}"
+
+// that was pretty fail, time for another approach
+
+type Q_VALUE =
+    | Q_LIT of int64
+    | Q_INPUT of int * list<int64 * List<int>>
+    | Q_REG of Reg
+    | Q_INFINITE
+    static member freshInput(inputNo: int) : Q_VALUE =
+        let init =
+            [ 1 .. 9 ]
+            |> List.map (fun v -> ((v |> int64, [ v ])))
+
+        Q_INPUT(inputNo, init)
+
+    member this.PrintValue() =
+        match this with
+        | Q_INFINITE -> "∞"
+        | Q_LIT i -> i |> string
+        | Q_REG r -> r.ToString()
+        | Q_INPUT (inp, vals) ->
+            let valToString ((value: int64), (inputs: list<int>)) : string =
+                let inputs =
+                    inputs |> List.map string |> String.concat ""
+
+                $"{value}⇦⟅{inputs}⟆"
+
+            let vals =
+                vals |> List.map valToString |> String.concat ","
+
+            $"∈ #[{inp}] {vals}"
+
+    static member fromVal(v: Value) =
+        match v with
+        | I i -> Q_LIT i
+        | R r -> Q_REG r
+
+type Q_INST = { op: Op; reg: Reg; value: Q_VALUE }
+
+let qInstToString (inst: Q_INST) =
+    $"{inst.op} {inst.reg} {inst.value.PrintValue()}"
+
+type QProgram = list<Q_INST>
+
+let printQProgram (program: QProgram) =
+    program
+    |> List.map qInstToString
+    |> List.map (printfn "%s")
+
+let toQProgram (program: Program) : QProgram =
+    let qVal = Q_VALUE.fromVal
+
+    let rec translate (program: Program) (inputNo: int) : QProgram =
+        match program with
+        | [] -> []
+        | inst :: rest ->
+            match inst with
+            | Inst (INP, reg, _) ->
+                let inst =
+                    { op = Xset
+                      reg = reg
+                      value = Q_VALUE.freshInput inputNo }
+
+                let inputNo = inputNo + 1
+                inst :: (translate rest inputNo)
+            | Inst (op, reg, value) ->
+                { op = op
+                  reg = reg
+                  value = qVal value }
+                :: (translate rest inputNo)
+
+    translate program 0
+
+let qProgram = toQProgram optimalProgram
+
+// printQProgram qProgram
+
+
+let qCompress (program: QProgram) =
+    let zero = Q_LIT 0L
+
+    let rec eval (regs: Map<Reg, Q_VALUE>) (program: QProgram) =
+        let set reg value = regs.Add(reg, value)
+        let get = regs.TryFind >> Option.get
+        let hasValue = regs.TryFind >> ((<>) (Some Q_INFINITE))
+
+        match program with
+        | [] -> []
+        | inst :: rest ->
+            match inst with
+            | { op = op; reg = reg; value = Q_REG other} when hasValue other ->
+                let value = get other
+                let inst = { op = op ; reg = reg; value = value }
+                let program = inst :: rest
+                eval regs program
+            | { op = INP; reg = _; value = _ } -> failwith $"{inst} not supported"
+            | { op = ADD; reg = reg; value = Q_LIT i } ->
+                match get reg with
+                | Q_INFINITE ->
+                    inst :: (eval regs rest)
+                | Q_LIT v1 ->
+                    let value = Q_LIT(v1+i)
+                    let inst = { op = Xset; reg = reg; value = value}
+                    let regs = set reg value
+                    inst :: (eval regs rest)
+                | Q_INPUT (inpNo, values) ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value + i, origins))
+                    let value = Q_INPUT(inpNo, values)
+                    let inst = { op = Xset; reg = reg; value = value }
+                    let regs = set reg value
+                    inst :: (eval regs rest)
+            | { op = ADD
+                reg = reg
+                value = Q_INPUT (no, values) } ->
+                match get reg with
+                | Q_LIT v1 ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value + v1, origins))
+                    let value = Q_INPUT(no, values)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | _ ->
+                    let regs = set reg Q_INFINITE
+                    inst :: (eval regs rest)
+            | { op = ADD ; reg = reg; value = Q_REG _ } ->
+                let regs = set reg Q_INFINITE
+                inst :: (eval regs rest)
+            | { op = MUL; reg = reg; value = Q_LIT i } ->
+                match get reg with
+                | Q_INFINITE -> inst :: (eval regs rest)
+                | Q_LIT v1 ->
+                    let value = Q_LIT(v1 + i)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | Q_INPUT (inpNo, values) ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value * i, origins))
+                    let value = Q_INPUT(inpNo, values)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+            | { op = MUL
+                reg = reg
+                value = Q_INPUT (no, values) } ->
+                match get reg with
+                | Q_LIT v1 ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value * v1, origins))
+                    let value = Q_INPUT(no, values)
+                    let regs = set reg value
+                    let inst = { op = Xset; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | _ ->
+                    let regs = set reg Q_INFINITE
+                    inst :: (eval regs rest)
+            | { op = MUL; reg = reg; value = Q_REG _ } ->
+                let regs = set reg Q_INFINITE
+                inst :: (eval regs rest)
+            | { op = DIV; reg = reg; value = Q_LIT i } ->
+                match get reg with
+                | Q_INFINITE -> inst :: (eval regs rest)
+                | Q_LIT v1 ->
+                    let value = Q_LIT(v1 / i)
+                    let regs = set reg value
+                    let inst = { op = Xset; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | Q_INPUT (inpNo, values) ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value / i, origins))
+                    let value = Q_INPUT(inpNo, values)
+                    let regs = set reg value
+                    let inst = { op = Xset; reg = reg; value = value }
+                    inst :: (eval regs rest)
+            | { op = DIV
+                reg = reg
+                value = Q_INPUT (no, values) } ->
+                match get reg with
+                | Q_LIT v1 ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value / v1, origins))
+                    let value = Q_INPUT(no, values)
+                    let regs = set reg value
+                    let inst = { op = Xset; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | _ ->
+                    let regs = set reg Q_INFINITE
+                    inst :: (eval regs rest)
+            | { op = MOD; reg = reg; value = Q_LIT i } ->
+                match get reg with
+                | Q_INFINITE ->
+                    inst :: (eval regs rest)
+                | Q_LIT v1 ->
+                    let value = Q_LIT(v1 % i)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | Q_INPUT (inpNo, values) ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value % i, origins))
+                    let value = Q_INPUT(inpNo, values)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+            | { op = MOD
+                reg = reg
+                value = Q_INPUT (no, values) } ->
+                match get reg with
+                | Q_LIT v1 ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (value % v1, origins))
+                    let value = Q_INPUT(no, values)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | _ ->
+                    let regs = set reg Q_INFINITE
+                    inst :: (eval regs rest)
+            | { op = EQL; reg = reg; value = Q_LIT i } ->
+                let eq a b = if a = b then 1L else 0L
+                match get reg with
+                | Q_INFINITE -> inst :: (eval regs rest)
+                | Q_LIT v1 ->
+                    let value = Q_LIT (eq v1 i)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+                | Q_INPUT (inpNo, values) ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (eq value i, origins))
+                    let value = Q_INPUT(inpNo, values)
+                    let regs = set reg value
+                    let inst = { op = Xset ; reg = reg; value = value }
+                    inst :: (eval regs rest)
+            | { op = EQL
+                reg = reg
+                value = Q_INPUT (no, values) } ->
+                let eq a b = if a = b then 1L else 0L
+
+                match get reg with
+                | Q_LIT v1 ->
+                    let values =
+                        values
+                        |> List.map (fun (value, origins) -> (eq value v1, origins))
+
+                    let regs = set reg (Q_INPUT(no, values))
+                    inst :: (eval regs rest)
+                | _ ->
+                    let regs = set reg Q_INFINITE
+                    inst :: (eval regs rest)
+            | { op = Xset; reg = reg; value = value } ->
+                let regs = set reg value
+                inst :: (eval regs rest)
+            | { op = XsetR; reg = reg; value = Q_REG other } ->
+                let regs = set reg (get other)
+                inst :: (eval regs rest)
+            | { op = XsetR; reg = reg; value = value } ->
+                // can happen due to first match in this method
+                let regs = set reg value
+                inst :: (eval regs rest)
+            | _ ->
+                printfn $"Unsupported: {qInstToString inst} [corrupt]"
+                inst :: (eval regs rest)
+
+    let initState =
+        [ W; X; Y; Z ]
+        |> List.map (fun reg -> (reg, zero))
+        |> Map
+
+    eval initState program
+
+let qprogram1 = qCompress qProgram
+
+printfn "**********"
+printfn "COMPRESSED"
+printfn "**********"
+
+printQProgram qprogram1
+
+let qDeadCodeElim (program: QProgram): QProgram =
+    let rec eval (regs:Set<Reg>) (program:QProgram) =
+        let used = regs.Contains
+        let arit op = op = ADD || op = MUL
+        match program with
+        | [] -> []
+        | inst :: rest ->
+            match inst with
+            | { op = INP ; reg = reg; value = _ } when used reg ->
+                let regs = regs.Remove reg
+                inst :: (eval regs rest)
+            | { op = INP ; reg = _ ; value = _ } ->
+                eval regs rest
+            | { op = ADD ; reg = reg ; value = Q_REG other } when used reg ->
+                let regs = regs.Add other
+                inst :: (eval regs rest)
+            | { op = ADD; reg = reg ; value = _ } when used reg ->
+                inst :: (eval regs rest)
+            | { op = ADD; reg = _ ; value = _} ->
+                eval regs rest
+            | { op = MUL ; reg = reg ; value = Q_REG other } when used reg ->
+                let regs = regs.Add other
+                inst :: (eval regs rest)
+            | { op = MUL; reg = reg ; value = _ } when used reg ->
+                inst :: (eval regs rest)
+            | { op = MUL; reg = _ ; value = _} ->
+                eval regs rest
+            | { op = DIV ; reg = reg ; value = Q_REG other } ->
+                let regs = regs.Add other
+                inst :: (eval regs rest)
+            | { op = DIV; reg = reg ; value = _ } when used reg ->
+                inst :: (eval regs rest)
+            | { op = DIV; reg = _ ; value = _} ->
+                eval regs rest
+            | { op = MOD ; reg = reg ; value = Q_REG other } ->
+                let regs = regs.Add other
+                let regs = regs.Add reg 
+                inst :: (eval regs rest)
+            | { op = MOD; reg = reg ; value = _ } -> 
+                let regs = regs.Add reg 
+                inst :: (eval regs rest)
+            | { op = EQL ; reg = reg ; value = Q_REG other } when used reg ->
+                let regs = regs.Add other
+                inst :: (eval regs rest)
+            | { op = EQL; reg = reg ; value = _ } when used reg ->
+                inst :: (eval regs rest)
+            | { op = EQL; reg = _ ; value = _} ->
+                eval regs rest
+            | { op = Xset; reg = reg ; value = _} when used reg ->
+                let regs = regs.Remove reg 
+                inst :: (eval regs rest)
+            | { op = Xset; reg = _ ; value = _} ->
+                eval regs rest
+            | { op = XsetR; reg = reg ; value = Q_REG other} when used reg ->
+                let regs = regs.Remove reg 
+                let regs = regs.Add other 
+                inst :: (eval regs rest)
+            | { op = XsetR; reg = _ ; value = _} ->
+                eval regs rest
+            | _ ->
+                printfn $"Not implemented: {inst} [corrupt]"
+                inst :: eval regs rest 
+     
+    let initUsed = Set.singleton Z
+    program |> List.rev
+            |> (eval initUsed)
+            |> List.rev 
+
+let qprogram2 = qDeadCodeElim qprogram1
+
+printfn "DEAD CODE ELIM DONE"
+printfn "###################"
+
+printQProgram qprogram2 
