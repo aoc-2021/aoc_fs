@@ -363,3 +363,81 @@ let program1 = constElim program
 
 printfn "CONST ELIMINATED: "
 printProgram program1 
+
+let removeUnused (program:Program) =
+    let rec eval (inUse:Set<Reg>) (program:Program) =
+        let used = inUse.Contains
+        match program with
+        | [] -> []
+        | inst::rest ->
+            printfn $"inUse: {inUse}"
+            printInstruction inst 
+            let skip () =
+                printfn "Skipping"
+                eval inUse rest 
+            let continue () =
+                printfn "Continuing"
+                inst :: (eval inUse rest)
+            let continueWith (reg:Reg) =
+                printfn $"Continuing with {reg}"
+                let inUse = inUse.Add reg
+                inst :: (eval inUse rest)
+            let continueWithout (reg:Reg) =
+                printfn $"Continuing without {reg}"
+                let inUse = inUse.Remove(reg)
+                inst :: (eval inUse rest)
+            match inst with
+            | INP _ -> failwith "INP is not supported"
+            | ADDI (reg,_) when used reg ->
+                continue () 
+            | ADDI _ ->
+                skip ()
+            | ADDR (r1,r2) when used r1 ->
+                continueWith r2
+            | ADDR _ ->
+                skip ()
+            | MULI (reg,_) when used reg ->
+                continue ()
+            | MULR (r1,r2) when used r1 ->
+                continueWith r2
+            | DIVI (reg,_) when used reg ->
+                continue ()
+            | DIVI _ ->
+                skip ()
+            | MODI (reg,_) when used reg ->
+                continue ()
+            | MODI _ ->
+                skip ()
+            | EQLI (r1,i) when used r1 ->
+                continue ()
+            | EQLI _ ->
+                skip ()
+            | EQLR (r1,r2) when used r1 ->
+                continueWith r2
+            | EQLR _ ->
+                skip ()
+            | SETI (r1,_) when used r1 ->
+                continueWithout r1 
+            | SETI _ ->
+                skip ()
+            | SETR (r1,r2) when used r1 ->
+                let inUse = inUse.Remove r1
+                let inUse = inUse.Add r2
+                inst :: (eval inUse rest)
+            | SETR _ ->
+                skip ()
+            | _ -> failwith $"Not implemented: {inst}"
+    program |> List.rev
+            |> eval (Set.singleton Z)
+            |> List.rev
+
+let program2 = removeUnused program1
+
+printfn "*****"
+printfn "removed unused"
+printfn "*****"
+printfn ""
+printfn $"{program.Length} -> {program1.Length} -> {program2.Length}"
+printfn ""
+
+printProgram program2
