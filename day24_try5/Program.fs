@@ -212,6 +212,7 @@ let modValue (value: Value) (v2: int64) =
     | RANGE (min, max) -> RANGE(0,v2)
 
 let rec eqValue (v1: Value) (v2: Value) =
+    printfn $"EQValue {v1} {v2}"
     let eq a b = if a = b then 1L else 0L
     let BOOLS = [0L;1L] |> Set |> MULTIPLE
 
@@ -496,4 +497,195 @@ printProgram program3
 
 // ok, now it's slightly more optimal, time to try to solve the task
 
-         
+let UNKNOWN = RANGE (-1_000_000_000L,1_000_000_000)
+
+let tryExecutePartial (program:Program) : bool =
+    let rec eval (alu:ALU) (program:Program) =
+        let get = alu.TryFind >> Option.get 
+        match program with
+        [] ->
+            let z0 = eqValue (get Z) (CONST 0L)
+            z0 <> (CONST 0L)
+        | inst :: rest ->
+            match inst with
+            | ADDI (r1,i) ->
+                let alu = alu.Add(r1,addValue (get r1) i)
+                eval alu rest
+            | ADDR (r1,r2) ->
+                let alu = alu.Add(r1, addValue (get r1) (get r2))
+                eval alu rest
+            | MULI (r1,i) ->
+                let alu = alu.Add (r1,mulValue(get r1) i)
+                eval alu rest
+            | MULR (r1,r2) ->
+                let alu = alu.Add (r1,mulValue (get r1) (get r2))
+                eval alu rest 
+            | SETI (r1,i) ->
+                let alu = alu.Add(r1,i)
+                eval alu rest
+            | _ ->
+                printfn "Not implemented:"
+                printInstruction inst
+                eval alu rest
+    let initALU = fillALU UNKNOWN
+    eval initALU program
+    
+let determineLastBoolean (program:Program) =
+    let rec findBoolean (program:Program) : Option<Program*Inst>*Program =
+        match program with
+        | [] -> None,[]
+        | inst :: rest ->
+            let front,back = findBoolean rest
+            match front with
+            | Some (program,op) ->
+                Some(inst::program,op),back
+            | None ->
+                match inst with
+                | EQLI _ -> Some([],inst),back
+                | EQLR _ -> Some([],inst),back
+                | _ -> None,(inst::back)
+    let Some(front,op),back = findBoolean program
+
+    let reg = match op with
+              | EQLI (reg,_) -> reg
+              | EQLR (reg,_) -> reg
+
+    let zeroProgram = SETI (reg,CONST 0L) :: back
+    let oneProgram = SETI (reg,CONST 1L) :: back
+    
+    let zeroRes = tryExecutePartial zeroProgram
+    let oneRes = tryExecutePartial oneProgram 
+    
+    printfn $"Results: {zeroRes} {oneRes}"    
+        
+    (front,back)
+
+printfn "************************"
+printfn "DETERMINING LAST BOOLEAN"
+printfn "************************"
+// let front,back = determineLastBoolean program3
+
+// OK, dead end - but now it's time to solve the task
+
+let testBooleanPaths (program:Program) =
+    let rec eval (alu:Map<Reg,int64>) (program:Program) : Option<Program> =
+        let neg (alu:Map<Reg,int64>) (reg:Reg) =
+            let value = alu.TryFind reg
+            match alu.TryFind reg with
+            | Some(0L) -> alu.Add(reg,1L)
+            | Some(1L) -> alu.Add(reg,0L)
+            | _ -> alu
+        let copyFrom (alu:Map<Reg,int64>) (r1:Reg) (r2:Reg) =
+            match alu.TryFind r2 with
+            | None -> alu.Remove r1
+            | Some(v) -> alu.Add(r1,v)
+        let zero (alu:Map<Reg,int64>) (reg:Reg) = alu.Add(reg,0L)
+        let nonzero (alu:Map<Reg,int64>) reg = alu.Add(reg,1L)
+        let unknown (alu:Map<Reg,int64>) reg = alu.Remove(reg)
+        let isZero = alu.TryFind >> ((=) (Some(0L)))
+        let isNonZero = alu.TryFind >> ((=) (Some(1L)))
+        let isUnknown = alu.TryFind >> ((=) None)
+        let canBeZero (value:Value) =
+            (eqValue value (CONST 0L)) <> (CONST 0L)
+        let canBeSame (r1:Reg) (r2:Reg) =
+            if isZero r1 && isNonZero r2 then false
+            elif isNonZero r1 && isZero r2 then false
+            else true
+            
+        let continue (inst:Inst) (alu:Map<Reg,int64>) (program:Program) : Option<Program> =
+            let result = eval alu program
+            result |> Option.map (fun program -> inst::program)
+        let fail (inst: Inst) =
+            printf $"FAILED: {inst}"
+            None
+            
+        match program with
+        | [] ->
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            printfn "FINISHED OK ##########"
+            Some([])
+        | inst :: rest ->
+            printf "BOOLEAN PATHS: "
+            printfn $"ALU: {alu}"
+            printInstruction inst
+
+            match inst with
+            | ADDI (r1,i) ->
+                let alu = unknown alu r1
+                continue inst alu rest
+            | ADDR (r1,r2) when isZero r1 ->
+                let alu1 = zero alu r1
+                let alu1 = zero alu r2
+                let alu2 = nonzero alu r1
+                let alu2 = nonzero alu r2
+                let res1 = continue inst alu1 rest
+                let res2 = continue inst alu2 rest
+                res1
+            | ADDR (r1,r2) ->
+                let alu = unknown alu r1
+                continue inst alu rest
+            | MULI (r1,_) ->
+                continue inst alu rest
+            | MULR (r1,r2) when isNonZero r1 && isZero r2 ->
+                fail inst 
+             | MULR (r1,r2) when isNonZero r1 && isUnknown r2 ->
+                let alu = nonzero alu r2
+                continue inst alu rest
+             | MULR (r1,r2) when isZero r1 && isZero r2 ->
+                let alu = unknown alu r1
+                continue inst alu rest
+             | MULR _ -> continue inst alu rest
+             | DIVI _ -> continue inst alu rest
+             | MODI _ -> continue inst alu rest
+             | EQLI (r1,CONST 0L) when isZero r1 ->
+                 let alu = nonzero alu r1
+                 continue inst alu rest
+             | EQLI (r1,CONST 0L) when isNonZero r1 -> 
+                 continue inst alu rest
+             | EQLI (r1,_) ->
+                 let alu = unknown alu r1
+                 continue inst alu rest 
+             | EQLR (r1,r2) when isZero r1 && isZero r2 ->
+                 let alu = nonzero alu r1
+                 continue inst alu rest
+             | EQLR (r1,_) ->
+                 let alu = unknown alu r1
+                 continue inst alu rest 
+             | EQLR (r1,r2) when isNonZero r1 -> 
+                 let alu = copyFrom alu r1 r2
+                 continue inst alu rest
+             | SETI (r1,i) when isNonZero r1 && (not (canBeZero i)) ->
+                 continue inst alu rest 
+             | SETI (r1,CONST 0L) when isNonZero r1 ->
+                 fail inst
+             | SETI (r1,value) when isZero r1 && (not (canBeZero value)) ->
+                 fail inst 
+             | SETI (r1,_) ->
+                 let alu = unknown alu r1
+                 continue inst alu rest
+             | SETR (r1,r2) when isZero r1 && isNonZero r2 ->
+                 fail inst 
+             | SETR (r1,r2) when (not (canBeSame r1 r2)) -> 
+                 fail inst 
+             | SETR (r1,r2) when isUnknown r1 ->
+                 let alu = copyFrom alu r1 r2
+                 continue inst alu rest
+             | SETR (r1,r2) when isUnknown r2 ->
+                 let alu = copyFrom alu r2 r1
+                 continue inst alu rest
+             | SETR _ ->
+                 continue inst alu rest 
+             | _ -> failwith $"Not implemented: {inst} " 
+        
+    let initMap = [(Z,0L)] |> Map 
+    program |> List.rev
+            |> eval initMap
+            |> Option.map List.rev 
+
+let program4 = testBooleanPaths program3
