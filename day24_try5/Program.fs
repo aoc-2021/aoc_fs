@@ -441,3 +441,59 @@ printfn $"{program.Length} -> {program1.Length} -> {program2.Length}"
 printfn ""
 
 printProgram program2
+
+// OK, now we have a pretty optimal program, only one thing remains... solving the task?
+// nah... pushing inputs down to optimize the amount of processing that can be done
+// before uncertainty
+
+let rec pushDownInputs (program:Program) =
+    match program with
+    | [] -> [] 
+    | [inst] -> [inst]
+    | inst :: inst2 :: rest ->
+        match inst with
+        | SETI (reg,INPUT _) ->
+            let shuffle = 
+                match inst2 with
+                | ADDI (r2,_) when r2 = reg -> false
+                | ADDI _ -> true
+                | ADDR (r2,r3) when r2 = reg || r3 = reg -> false
+                | ADDR _ -> true
+                | MULI (r2,_) when r2 = reg -> false
+                | MULI _ -> true
+                | MULR (r2,r3) when r2 = reg || r3 = reg -> false
+                | MULR _ -> true
+                | DIVI (r2,_) when r2 = reg -> false
+                | DIVI _ -> true 
+                | MODI (r2,_) when r2 = reg -> false
+                | MODI _ -> true
+                | EQLI (r2,_) when r2 = reg -> false
+                | EQLI _ -> true
+                | EQLR (r2,r3) when r2 = reg || r3 = reg -> false
+                | EQLR _ -> true
+                | SETI (_,INPUT _) -> false
+                | SETI (r2,_) when r2 = reg ->
+                    failwith $"leftover shawowing: {inst2} shadows {inst}"
+                | SETI _ -> true
+                | SETR (r2,r3) when r2 = reg || r3 = reg ->
+                    failwith $"Direct assignment of known value: {r2}<-{r3} following {inst}"
+                | SETR _ -> true
+                | _ -> failwith $"Not implemented: {inst2}"
+            if shuffle then
+                printfn "Pushing down"
+                inst2 :: (pushDownInputs (inst :: rest))
+            else
+                inst :: (pushDownInputs (inst2 :: rest))
+        | _ -> inst :: (pushDownInputs (inst2 :: rest))      
+                    
+let program3 = pushDownInputs program2
+
+printfn "******************"
+printfn "Pushed down inputs"
+printfn "******************"
+
+printProgram program3
+
+// ok, now it's slightly more optimal, time to try to solve the task
+
+         
