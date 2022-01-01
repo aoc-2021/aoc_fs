@@ -621,7 +621,7 @@ let rec cApplyAddi (reg:Reg) (value:Value) (con:Constraint) : Constraint =
     | C_EVEN r,_ when r = reg && allEven -> con
     | C_EVEN r,_ when r = reg && allOdd -> C_ODD r
     | C_EVEN _,_ -> con
-        
+    | C_FAIL,_ -> C_FAIL  
     | _ -> failwith $"Not implemented:cApplyAddi {con}" 
         
 let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
@@ -661,7 +661,8 @@ let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
     | C_ODD r when r = r1 -> C_AND [C_ODD r1;C_ODD r2]
     | C_ODD _ -> con
     | C_EVEN r when r = r1 -> C_OR [C_EVEN r1;C_EVEN r2]
-    | C_EVEN _ -> con 
+    | C_EVEN _ -> con
+    | C_FAIL -> C_FAIL 
     | _ -> failwith $"Not implemented: {con}"
 
 let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
@@ -693,7 +694,8 @@ let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
     | C_EVEN r when r = reg ->
         if isEvenValue value then C_NONE
         else C_FAIL 
-    | C_EVEN _ -> con 
+    | C_EVEN _ -> con
+    | C_FAIL -> C_FAIL 
        
     | _ -> failwith $"Not implemented: {con}"
 
@@ -726,6 +728,36 @@ let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
     | C_EVEN r -> cApplyEqli reg value (C_ZERO r)
     | _ -> failwith $"Not implemented {con}"
 
+let rec cApplyEqlr r1 r2 (con:Constraint) =
+    match con with
+    | C_OR ors -> ors |> List.map (cApplyEqlr r1 r2) |> C_OR
+    | C_AND ands -> ands |> List.map (cApplyEqlr r1 r2) |> C_AND
+    | C_ZERO r when r = r1 ->
+        let nz1 = C_OR [C_LT (r1,0L);C_GT (r1,0L)]
+        let nz2 = C_OR [C_LT (r2,0L);C_GT (r2,0L)]
+        C_OR [nz1;nz2]
+    | C_ZERO _ -> con 
+    | C_EQ (r,0L) -> cApplyEqlr r1 r2 (C_ZERO r)
+    | C_EQ (r,1L) when r = r1  ->
+        let bothZero = C_AND [C_ZERO r1;C_ZERO r2]
+        let above = C_AND [C_GT (r1,0L);C_GT (r2,0L)]
+        let below = C_AND [C_LT (r1,0L);C_LT (r2,0L)]
+        let value = C_OR [bothZero;above;below]
+        let odd = C_AND [C_ODD r1;C_ODD r2]
+        let even = C_AND [C_EVEN r1;C_EVEN r2]
+        let bools = C_OR [odd;even]
+        C_AND [value;bools]
+    | C_GT (r,i) when r = r1 && i > 0L -> C_FAIL 
+    | C_GT (r,0L) when r = r1 -> cApplyEqlr r1 r2 (C_EQ (r,1L))
+    | C_GT (r,i) when r = r1 && i < 1L -> C_NONE
+    | C_GT _ -> con 
+    | C_LT (r,i) when r = r1 && i > 1L -> C_NONE 
+    | C_LT (r,1L) when r = r1 -> cApplyEqlr r1 r2 (C_ZERO r)
+    | C_LT (r,i) when r = r1 && i < 1L -> C_FAIL
+    | C_LT _ -> con 
+    | C_FAIL -> C_FAIL 
+    | _ -> failwith $"Not implemented {con}"
+
 let checkConstraints (program:Program) : Program =
     let rec check (con:Constraint) (program:Program) =
         match program with
@@ -749,6 +781,9 @@ let checkConstraints (program:Program) : Program =
                 check con rest
             | EQLI (r,value) ->
                 let con = cApplyEqli r value con
+                check con rest
+            | EQLR (r1,r2) ->
+                let con = cApplyEqlr r1 r2 con
                 check con rest 
             | _ -> failwith $"Not implemented {inst}"
             
