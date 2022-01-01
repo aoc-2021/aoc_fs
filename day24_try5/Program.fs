@@ -697,6 +697,31 @@ let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
        
     | _ -> failwith $"Not implemented: {con}"
 
+let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
+    match con with
+    | C_OR ors -> ors |> List.map (cApplyEqli reg value) |> C_OR
+    | C_AND ands -> ands |> List.map (cApplyEqli reg value) |> C_AND
+
+    | C_ZERO r when r = reg -> failwith $"Not implemented: {con}"
+    | C_ZERO _ -> con
+    | C_EQ (r,1L) when r= reg ->
+        match value with
+        | CONST c -> C_EQ (r,c)
+        | MULTIPLE s when s.Count < 3 ->
+            s |> Set.toList
+              |> List.map (fun s -> C_EQ(r,s)) |> C_OR
+        | _ -> C_AND [C_LT (r,largest value + 1L);C_GT (r,smallest value - 1L)]
+    | C_GT (r,1L) when r = reg -> C_FAIL
+    | C_GT (r,0L) when r = reg -> cApplyEqli reg value (C_EQ (r,1L))
+    | C_GT (r,i) when r = reg && i < 0L -> C_NONE
+    | C_GT _ -> con  
+    | C_LT (r,0L) when r = reg -> C_FAIL
+    | C_LT (r,1L) when r = reg -> cApplyEqli reg value (C_EQ (r,0L))
+    | C_LT (r,i) when r = reg && i > 1L -> C_NONE
+    | C_LT _ -> con 
+    
+    | _ -> failwith $"Not implemented {con}"
+
 let checkConstraints (program:Program) : Program =
     let rec check (con:Constraint) (program:Program) =
         match program with
@@ -717,6 +742,9 @@ let checkConstraints (program:Program) : Program =
                 check con rest
             | SETI (r1,value) ->
                 let newCon = cApplySeti r1 value con
+                check con rest
+            | EQLI (r,value) ->
+                let con = cApplyEqli r value con
                 check con rest 
             | _ -> failwith $"Not implemented {inst}"
             
