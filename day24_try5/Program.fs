@@ -702,7 +702,9 @@ let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
     | C_OR ors -> ors |> List.map (cApplyEqli reg value) |> C_OR
     | C_AND ands -> ands |> List.map (cApplyEqli reg value) |> C_AND
 
-    | C_ZERO r when r = reg -> failwith $"Not implemented: {con}"
+    | C_ZERO r when r = reg && value = (CONST 0L) ->
+        C_OR [C_GT (r,0L);C_LT (r,0L)]
+    | C_ZERO r when r = reg -> C_NONE 
     | C_ZERO _ -> con
     | C_EQ (r,1L) when r= reg ->
         match value with
@@ -711,15 +713,17 @@ let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
             s |> Set.toList
               |> List.map (fun s -> C_EQ(r,s)) |> C_OR
         | _ -> C_AND [C_LT (r,largest value + 1L);C_GT (r,smallest value - 1L)]
+    | C_EQ (r,0L) -> cApplyEqli reg value (C_ZERO r) 
     | C_GT (r,1L) when r = reg -> C_FAIL
     | C_GT (r,0L) when r = reg -> cApplyEqli reg value (C_EQ (r,1L))
     | C_GT (r,i) when r = reg && i < 0L -> C_NONE
     | C_GT _ -> con  
     | C_LT (r,0L) when r = reg -> C_FAIL
-    | C_LT (r,1L) when r = reg -> cApplyEqli reg value (C_EQ (r,0L))
+    | C_LT (r,1L) when r = reg -> cApplyEqli reg value (C_ZERO r)
     | C_LT (r,i) when r = reg && i > 1L -> C_NONE
-    | C_LT _ -> con 
-    
+    | C_LT _ -> con
+    | C_ODD r -> cApplyEqli reg value (C_EQ (r,0L))
+    | C_EVEN r -> cApplyEqli reg value (C_ZERO r)
     | _ -> failwith $"Not implemented {con}"
 
 let checkConstraints (program:Program) : Program =
