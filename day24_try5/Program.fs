@@ -510,7 +510,7 @@ let canContain (value:Value) (i:int64) =
     | RANGE (min,max) -> min <= i && max >= i
 
 let isOdd (i:int64) = i &&& 1L = 1L
-let isEven (i:int64) = i &&& 1L = 0L 
+let isEven (i:int64) = i &&& 1L = 0L
 
 let isOddValue (value:Value) =
     match value with
@@ -525,6 +525,27 @@ let isEvenValue (value:Value) =
     | INPUT (_,vals) -> vals.Values |> Seq.map isEven |> Seq.contains true
     | MULTIPLE s -> s |> Set.map isEven |> ((=) (Set.singleton false))
     | RANGE (min,max) -> min <> max
+
+let filterValue (value:Value) (f:int64->bool) =
+    match value with  
+    | CONST i -> if f i then CONST i else INVALID
+    | INPUT (i,vals) ->
+        let vals = vals |> Map.filter (fun _ v -> f v)
+        INPUT (i,vals)
+    | MULTIPLE s -> s |> Set.filter f |> MULTIPLE 
+    | RANGE (min,max) -> RANGE(min,max) // this could be better
+    | INVALID -> INVALID 
+
+let rec consolidateLossy (value:Value) =
+    match value with
+    | CONST c -> CONST c
+    | INPUT (i,vals) -> vals.Values |> Set |> MULTIPLE |> consolidateLossy
+    | MULTIPLE s when s.Count = 0 -> INVALID
+    | MULTIPLE s when s.Count = 1 -> s |> Set.toList |> List.head |> CONST
+    | MULTIPLE _ -> value
+    | RANGE (min,max) when min = max -> CONST min
+    | RANGE (min,max) when min + 20L > max  -> {min..max} |> Set |> MULTIPLE
+    | RANGE _ -> value 
 
 type Constraint =
     | C_ZERO of Reg
@@ -570,6 +591,39 @@ let rec cApplyAddr (con:Constraint) (r1:Reg) (r2:Reg) : Constraint =
     | C_EQ (r,i) when i = 0L -> cApplyAddr (C_ZERO r) r1 r2
     | _ -> failwith $"Not implemented: cApplyAddr {con}"
 
+let rec cApplyAddi (reg:Reg) (value:Value) (con:Constraint) : Constraint =
+    let allEven = value |> isOddValue |> not
+    let allOdd = value |> isEvenValue |> not 
+    match con,value with
+    | C_OR ors,_ -> ors |> List.map (cApplyAddi reg value) |> C_OR
+    | C_AND ands,_ -> ands |> List.map (cApplyAddi reg value) |> C_AND
+    | C_ZERO r,CONST c when r = reg -> C_EQ (r,-c)
+    | C_ZERO r,value when r = reg -> failwith $"Not implemented:cApplyAddi {con}"
+    | C_ZERO _,_ -> con
+    | C_GT (r,i),value when r = reg ->
+        match value with
+        | CONST v -> C_GT (r,i-v)
+        | _ -> failwith $"Not implemented:{con}"
+    | C_GT _,_ -> con
+    | C_LT (r,i),value when r = reg ->
+        match value with
+        | CONST v -> C_GT (r,i+v)
+        | _ -> failwith $"Not implemented:{con}"
+    | C_GT _,_ -> con
+ 
+        
+    | C_GT _,_ -> con 
+    | C_LT (r,i),value when r = reg -> failwith $"Not implemented:cApplyAddi {con}"
+    | C_LT _,_ -> con
+    | C_ODD r,_ when r = reg && allEven -> con
+    | C_ODD r,_ when r = reg && allOdd -> C_EVEN r
+    | C_ODD _,_ -> con 
+    | C_EVEN r,_ when r = reg && allEven -> con
+    | C_EVEN r,_ when r = reg && allOdd -> C_ODD r
+    | C_EVEN _,_ -> con
+        
+    | _ -> failwith $"Not implemented:cApplyAddi {con}" 
+        
 let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
     match con with
     | C_OR ors -> ors |> List.map (cApplyMulr r1 r2) |> C_OR
@@ -618,6 +672,10 @@ let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
         if isOddValue value then C_NONE
         else C_FAIL 
     | C_ODD _ -> con 
+    | C_EVEN r when r = reg ->
+        if isEvenValue value then C_NONE
+        else C_FAIL 
+    | C_EVEN _ -> con 
        
     | _ -> failwith $"Not implemented: {con}"
 
@@ -632,6 +690,9 @@ let checkConstraints (program:Program) : Program =
             match inst with
             | ADDR (r1,r2) ->
                 let con = cApplyAddr con r1 r2
+                check con rest
+            | ADDI (r1,i) ->
+                let con = cApplyAddi r1 i con
                 check con rest
             | MULR (r1,r2) ->
                 let con = cApplyMulr r1 r2 con
