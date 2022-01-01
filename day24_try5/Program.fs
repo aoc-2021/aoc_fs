@@ -630,6 +630,24 @@ let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
     | C_AND ands -> ands |> List.map (cApplyMulr r1 r2) |> C_AND
     | C_ZERO r when r1 = r -> C_OR [C_ZERO r1;C_ZERO r2]
     | C_ZERO _ -> con
+    | C_EQ (r,i) when r1 = r && i = 0L -> cApplyMulr r1 r2 (C_ZERO r)
+    | C_EQ (r,i) when r1 = r && i < 0L ->
+        let aboveBelow = C_AND [C_GT (r1,0L);(C_LT (r2,0L))]
+        let belowAbove = C_AND [C_LT (r1,0L);(C_GT (r2,0L))]
+        let range = C_OR [aboveBelow;belowAbove]
+        let oddEven =
+            if isOdd i then C_AND [C_ODD r1;C_ODD r2]
+            else C_OR [C_EVEN r1;C_EVEN r2]
+        C_AND [range;oddEven]
+    | C_EQ (r,i) when r1 = r && i > 0L ->
+        let above = C_AND [C_GT (r1,0L);(C_GT (r2,0L))]
+        let below = C_AND [C_LT (r1,0L);(C_LT (r2,0L))]
+        let range = C_OR [above;below]
+        let oddEven =
+            if isOdd i then C_AND [C_ODD r1;C_ODD r2]
+            else C_OR [C_EVEN r1;C_EVEN r2]
+        C_AND [range;oddEven]
+    | C_EQ _ -> con 
     | C_GT (r,i) when r = r1 && i >= 0L ->
         let bothAbove = C_AND [C_GT (r1,0L);(C_GT (r2,0L))]
         let bothBelow = C_AND [C_LT (r1,0L);(C_LT (r2,0L))]
