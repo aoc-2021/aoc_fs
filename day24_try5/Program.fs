@@ -53,6 +53,7 @@ let toReg (s: string) =
     | "x" -> X
     | "y" -> Y
     | "z" -> Z
+    | _ -> failwith $"Unrecognized register: {s}"
 
 let parseLine (line: string) =
     match line.Split ' ' with
@@ -73,7 +74,7 @@ let v2s (value: Value) =
     | INPUT (i, vals) ->
         let vals =
             [ 1 .. 9 ]
-            |> List.map (vals.TryFind)
+            |> List.map vals.TryFind
             |> List.map (Option.map string)
             |> List.map (Option.defaultValue "_")
             |> String.concat " "
@@ -85,10 +86,11 @@ let v2s (value: Value) =
         |> String.concat " "
         |> sprintf "{ %A }"
     | RANGE (a, b) -> $"[{a} .. {b} ]"
+    | INVALID -> "INVALID"
 
 let printInstruction (inst: Inst) =
     match inst with
-    | INP reg -> $"reg ⬅"
+    | INP reg -> $"{reg} ⬅"
     | ADDI (reg, value) -> $"+ {reg} {value |> v2s}"
     | ADDR (reg, other) -> $"+ {reg} {other}"
     | MULI (reg, value) -> $"* {reg} {value |> v2s}"
@@ -99,18 +101,17 @@ let printInstruction (inst: Inst) =
     | EQLR (reg, other) -> $"＝ {reg} {other}"
     | SETI (reg, value) -> $"{reg} := {value |> v2s}"
     | SETR (reg, other) -> $"{reg} := {other}"
-    | _ -> inst |> string
     |> printfn "%s"
 
 let printALU (alu:ALU) =
-    printfn "ALU:"
-    printfn $"  W: {alu.TryFind W |> Option.get |> v2s}"
-    printfn $"  X: {alu.TryFind X |> Option.get |> v2s}"
-    printfn $"  Y: {alu.TryFind Y |> Option.get |> v2s}"
+    printf "ALU:"
+    printf $"  W: {alu.TryFind W |> Option.get |> v2s}"
+    printf $"  X: {alu.TryFind X |> Option.get |> v2s}"
+    printf $"  Y: {alu.TryFind Y |> Option.get |> v2s}"
     printfn $"  Z: {alu.TryFind Z |> Option.get |> v2s}"
 
 let printProgram (program: Program) =
-    program |> List.map printInstruction
+    program |> List.map printInstruction |> ignore 
 
 
 let withInputs (program: Program) =
@@ -138,14 +139,16 @@ let smallest (value: Value) =
     | CONST i -> i
     | INPUT (_, v) -> v |> Map.toList |> List.map snd |> List.min
     | MULTIPLE s -> s.MinimumElement
-    | RANGE (min, max) -> min
+    | RANGE (min, _) -> min
+    | other -> failwith $"Not implemented: {other}"
 
 let largest (value: Value) =
     match value with
     | CONST i -> i
     | INPUT (_, v) -> v |> Map.toList |> List.map snd |> List.max
     | MULTIPLE s -> s.MaximumElement
-    | RANGE (min, max) -> max
+    | RANGE (_, max) -> max
+    | other -> failwith $"Not implemented: ${other}"
 
 
 let rec addValue (v1: Value) (v2: Value) =
@@ -203,16 +206,18 @@ let divValue (value: Value) (v2: int64) =
     | INPUT (i, vals) -> INPUT(i, vals |> Map.map (fun _ value -> value / v2))
     | MULTIPLE m -> m |> Set.map (fun v -> v / v2) |> MULTIPLE
     | RANGE (min, max) -> RANGE(min / v2, max / v2)
+    | INVALID -> INVALID 
 
 let modValue (value: Value) (v2: int64) =
     match value with
     | CONST i -> CONST(i % v2)
     | INPUT (i, vals) -> INPUT(i, vals |> Map.map (fun _ value -> value % v2))
     | MULTIPLE m -> m |> Set.map (fun v -> v % v2) |> MULTIPLE
-    | RANGE (min, max) -> RANGE(0,v2)
+    | RANGE (_, max) when max < v2 -> value 
+    | RANGE _ -> RANGE(0,v2)
+    | INVALID -> INVALID 
 
 let rec eqValue (v1: Value) (v2: Value) =
-    printfn $"EQValue {v1} {v2}"
     let eq a b = if a = b then 1L else 0L
     let BOOLS = [0L;1L] |> Set |> MULTIPLE
 
@@ -228,7 +233,7 @@ let rec eqValue (v1: Value) (v2: Value) =
             INPUT (i, vals)
     | CONST v1, MULTIPLE m -> m |> Set.map (eq v1) |> MULTIPLE
     | CONST v1, RANGE (min, max) when v1 > max || v1 < min -> CONST 0L
-    | CONST v1, RANGE _ -> BOOLS
+    | CONST _, RANGE _ -> BOOLS
     | INPUT (i,vals), INPUT(_,v2) ->
         let v1 = vals |> Map.toList |> List.map snd
         let v2 = v2 |> Map.toList |> List.map snd
@@ -242,8 +247,8 @@ let rec eqValue (v1: Value) (v2: Value) =
     | INPUT (i,vals),MULTIPLE m ->
         let v = vals |> Map.toList |> List.map snd
         let v = v |> List.map m.Contains |> Set
-        if v = Set.singleton (false) then
-            INPUT (i, vals |> Map.map (fun _ v -> 0L))
+        if v = Set.singleton false then
+            INPUT (i, vals |> Map.map (fun _ _ -> 0L))
         else
             BOOLS
     | MULTIPLE _, INPUT _ -> eqValue v2 v1
@@ -260,7 +265,8 @@ let isDetermined (value:Value) =
     | CONST _ -> true
     | INPUT _ -> true
     | RANGE _ -> false
-    | MULTIPLE _ -> false 
+    | MULTIPLE _ -> false
+    | INVALID -> false 
 
 let constElim (program: Program) =
     let rec eval (alu: Map<Reg, Value>) (program: Program) =
@@ -376,7 +382,7 @@ let removeUnused (program:Program) =
             let skip () =
                 printfn "Skipping"
                 eval inUse rest 
-            let continue () =
+            let cont () =
                 printfn "Continuing"
                 inst :: (eval inUse rest)
             let continueWith (reg:Reg) =
@@ -390,7 +396,7 @@ let removeUnused (program:Program) =
             match inst with
             | INP _ -> failwith "INP is not supported"
             | ADDI (reg,_) when used reg ->
-                continue () 
+                cont () 
             | ADDI _ ->
                 skip ()
             | ADDR (r1,r2) when used r1 ->
@@ -398,19 +404,19 @@ let removeUnused (program:Program) =
             | ADDR _ ->
                 skip ()
             | MULI (reg,_) when used reg ->
-                continue ()
+                cont ()
             | MULR (r1,r2) when used r1 ->
                 continueWith r2
             | DIVI (reg,_) when used reg ->
-                continue ()
+                cont ()
             | DIVI _ ->
                 skip ()
             | MODI (reg,_) when used reg ->
-                continue ()
+                cont ()
             | MODI _ ->
                 skip ()
-            | EQLI (r1,i) when used r1 ->
-                continue ()
+            | EQLI (r1,_) when used r1 ->
+                cont ()
             | EQLI _ ->
                 skip ()
             | EQLR (r1,r2) when used r1 ->
@@ -481,7 +487,6 @@ let rec pushDownInputs (program:Program) =
                 | SETR _ -> true
                 | _ -> failwith $"Not implemented: {inst2}"
             if shuffle then
-                printfn "Pushing down"
                 inst2 :: (pushDownInputs (inst :: rest))
             else
                 inst :: (pushDownInputs (inst2 :: rest))
@@ -497,195 +502,154 @@ printProgram program3
 
 // ok, now it's slightly more optimal, time to try to solve the task
 
-let UNKNOWN = RANGE (-1_000_000_000L,1_000_000_000)
+let canContain (value:Value) (i:int64) =
+    match value with
+    | CONST c -> c = i
+    | INPUT (_,vals) -> vals |> Map.toList |> List.exists (snd >> (=) i)
+    | MULTIPLE s -> s.Contains i
+    | RANGE (min,max) -> min <= i && max >= i
 
-let tryExecutePartial (program:Program) : bool =
-    let rec eval (alu:ALU) (program:Program) =
-        let get = alu.TryFind >> Option.get 
+let isOdd (i:int64) = i &&& 1L = 1L
+let isEven (i:int64) = i &&& 1L = 0L 
+
+let isOddValue (value:Value) =
+    match value with
+    | CONST i -> isOdd i
+    | INPUT (_,vals) -> vals.Values |> Seq.map isOdd |> Seq.contains true
+    | MULTIPLE s -> s |> Set.map isOdd |> ((=) (Set.singleton false))
+    | RANGE (min,max) -> min <> max
+
+let isEvenValue (value:Value) =
+    match value with
+    | CONST i -> isEven i
+    | INPUT (_,vals) -> vals.Values |> Seq.map isEven |> Seq.contains true
+    | MULTIPLE s -> s |> Set.map isEven |> ((=) (Set.singleton false))
+    | RANGE (min,max) -> min <> max
+
+type Constraint =
+    | C_ZERO of Reg
+    | C_EQ of Reg * int64 
+    | C_GT of Reg * int64
+    | C_GTR of Reg * Reg 
+    | C_LT of Reg * int64
+    | C_ODD of Reg
+    | C_EVEN of Reg
+    | C_AND of List<Constraint>
+    | C_OR of List<Constraint>
+    | C_NONE
+    | C_FAIL 
+
+let unknownConstraint (r1:Reg) =
+    let c1 = C_OR [C_ZERO r1;C_LT (r1,0L);C_GT(r1,0L)]
+    let c2 = C_OR [C_EVEN r1;C_ODD r1]
+    C_AND [c1;c2]
+
+let rec cFindR (reg:Reg) (con:Constraint): Constraint =
+    match con with
+    | C_ZERO r1 when r1 = reg -> con 
+    | C_GT (r1,_) when r1 = reg -> con
+    | C_GT (r1,_) when r1 = reg -> con
+    | C_ODD r1 when r1 = reg -> con
+    | C_EVEN r1 when r1 = reg -> con
+    | C_EQ (r1,_) when r1 = reg -> con
+    | C_AND cs -> cs |> List.map (cFindR reg) |> C_AND 
+    | C_OR cs -> cs |> List.map (cFindR reg) |> C_OR
+    | _ -> C_NONE 
+    
+let rec cApplyAddr (con:Constraint) (r1:Reg) (r2:Reg) : Constraint =
+    match con with
+    | C_ZERO r when r = r1 ->
+        let bothZero = C_AND [(C_ZERO r1);(C_ZERO r2)]
+        let plusMinus = C_AND [C_GT (r1,0L);C_LT (r2,0L)]
+        let minusPlus = C_AND [C_LT (r1,0L);C_GT (r2,0L)]
+        let values = C_OR [bothZero;plusMinus;minusPlus]
+        let odds = C_AND [C_ODD r1;C_ODD r2]
+        let evens = C_AND [C_EVEN r1;C_EVEN r2]
+        let oddEvens = C_OR [odds;evens]
+        C_AND [values;oddEvens]
+    | C_EQ (r,i) when i = 0L -> cApplyAddr (C_ZERO r) r1 r2
+    | _ -> failwith $"Not implemented: cApplyAddr {con}"
+
+let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
+    match con with
+    | C_OR ors -> ors |> List.map (cApplyMulr r1 r2) |> C_OR
+    | C_AND ands -> ands |> List.map (cApplyMulr r1 r2) |> C_AND
+    | C_ZERO r when r1 = r -> C_OR [C_ZERO r1;C_ZERO r2]
+    | C_ZERO _ -> con
+    | C_GT (r,i) when r = r1 && i >= 0L ->
+        let bothAbove = C_AND [C_GT (r1,0L);(C_GT (r2,0L))]
+        let bothBelow = C_AND [C_LT (r1,0L);(C_LT (r2,0L))]
+        C_OR [bothAbove;bothBelow]
+    | C_GT _ -> con
+    | C_LT (r,i) when r = r1 && i <= 0L ->
+        let aboveBelow = C_AND [C_GT (r1,0L);(C_LT (r2,0L))]
+        let belowAbove = C_AND [C_LT (r1,0L);(C_GT (r2,0L))]
+        C_OR [aboveBelow;belowAbove]
+    | C_LT _ -> con
+    | C_ODD r when r = r1 -> C_AND [C_ODD r1;C_ODD r2]
+    | C_ODD _ -> con
+    | C_EVEN r when r = r1 -> C_OR [C_EVEN r1;C_EVEN r2]
+    | C_EVEN _ -> con 
+    | _ -> failwith $"Not implemented: {con}"
+
+let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map (cApplySeti reg value) |> C_AND  
+    | C_OR ors -> ors |> List.map (cApplySeti reg value) |> C_OR
+    | C_ZERO r when r = reg ->
+        if canContain value 0L then
+            C_NONE
+        else
+            C_FAIL 
+    | C_ZERO _ -> con
+    | C_GT (r, i) when r = reg ->
+        if largest value > i then
+            C_NONE
+        else
+            C_FAIL
+    | C_GT _ -> con 
+    | C_LT (r, i) when r = reg ->
+        if smallest value < i then
+            C_NONE
+        else
+            C_FAIL
+    | C_LT _ -> con
+    | C_ODD r when r = reg ->
+        if isOddValue value then C_NONE
+        else C_FAIL 
+    | C_ODD _ -> con 
+       
+    | _ -> failwith $"Not implemented: {con}"
+
+let checkConstraints (program:Program) : Program =
+    let rec check (con:Constraint) (program:Program) =
         match program with
-        [] ->
-            let z0 = eqValue (get Z) (CONST 0L)
-            z0 <> (CONST 0L)
+        [] -> []
         | inst :: rest ->
+            printfn $"Checking: {inst}"
+            printfn $"Constraint: {con}"
+            printfn "--"
             match inst with
-            | ADDI (r1,i) ->
-                let alu = alu.Add(r1,addValue (get r1) i)
-                eval alu rest
             | ADDR (r1,r2) ->
-                let alu = alu.Add(r1, addValue (get r1) (get r2))
-                eval alu rest
-            | MULI (r1,i) ->
-                let alu = alu.Add (r1,mulValue(get r1) i)
-                eval alu rest
+                let con = cApplyAddr con r1 r2
+                check con rest
             | MULR (r1,r2) ->
-                let alu = alu.Add (r1,mulValue (get r1) (get r2))
-                eval alu rest 
-            | SETI (r1,i) ->
-                let alu = alu.Add(r1,i)
-                eval alu rest
-            | _ ->
-                printfn "Not implemented:"
-                printInstruction inst
-                eval alu rest
-    let initALU = fillALU UNKNOWN
-    eval initALU program
-    
-let determineLastBoolean (program:Program) =
-    let rec findBoolean (program:Program) : Option<Program*Inst>*Program =
-        match program with
-        | [] -> None,[]
-        | inst :: rest ->
-            let front,back = findBoolean rest
-            match front with
-            | Some (program,op) ->
-                Some(inst::program,op),back
-            | None ->
-                match inst with
-                | EQLI _ -> Some([],inst),back
-                | EQLR _ -> Some([],inst),back
-                | _ -> None,(inst::back)
-    let Some(front,op),back = findBoolean program
-
-    let reg = match op with
-              | EQLI (reg,_) -> reg
-              | EQLR (reg,_) -> reg
-
-    let zeroProgram = SETI (reg,CONST 0L) :: back
-    let oneProgram = SETI (reg,CONST 1L) :: back
-    
-    let zeroRes = tryExecutePartial zeroProgram
-    let oneRes = tryExecutePartial oneProgram 
-    
-    printfn $"Results: {zeroRes} {oneRes}"    
-        
-    (front,back)
-
-printfn "************************"
-printfn "DETERMINING LAST BOOLEAN"
-printfn "************************"
-// let front,back = determineLastBoolean program3
-
-// OK, dead end - but now it's time to solve the task
-
-let testBooleanPaths (program:Program) =
-    let rec eval (alu:Map<Reg,int64>) (program:Program) : Option<Program> =
-        let neg (alu:Map<Reg,int64>) (reg:Reg) =
-            let value = alu.TryFind reg
-            match alu.TryFind reg with
-            | Some(0L) -> alu.Add(reg,1L)
-            | Some(1L) -> alu.Add(reg,0L)
-            | _ -> alu
-        let copyFrom (alu:Map<Reg,int64>) (r1:Reg) (r2:Reg) =
-            match alu.TryFind r2 with
-            | None -> alu.Remove r1
-            | Some(v) -> alu.Add(r1,v)
-        let zero (alu:Map<Reg,int64>) (reg:Reg) = alu.Add(reg,0L)
-        let nonzero (alu:Map<Reg,int64>) reg = alu.Add(reg,1L)
-        let unknown (alu:Map<Reg,int64>) reg = alu.Remove(reg)
-        let isZero = alu.TryFind >> ((=) (Some(0L)))
-        let isNonZero = alu.TryFind >> ((=) (Some(1L)))
-        let isUnknown = alu.TryFind >> ((=) None)
-        let canBeZero (value:Value) =
-            (eqValue value (CONST 0L)) <> (CONST 0L)
-        let canBeSame (r1:Reg) (r2:Reg) =
-            if isZero r1 && isNonZero r2 then false
-            elif isNonZero r1 && isZero r2 then false
-            else true
+                let con = cApplyMulr r1 r2 con
+                check con rest
+            | SETI (r1,value) ->
+                let newCon = cApplySeti r1 value con
+                check con rest 
+            | _ -> failwith $"Not implemented {inst}"
             
-        let continue (inst:Inst) (alu:Map<Reg,int64>) (program:Program) : Option<Program> =
-            let result = eval alu program
-            result |> Option.map (fun program -> inst::program)
-        let fail (inst: Inst) =
-            printf $"FAILED: {inst}"
-            None
-            
-        match program with
-        | [] ->
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            printfn "FINISHED OK ##########"
-            Some([])
-        | inst :: rest ->
-            printf "BOOLEAN PATHS: "
-            printfn $"ALU: {alu}"
-            printInstruction inst
-
-            match inst with
-            | ADDI (r1,i) ->
-                let alu = unknown alu r1
-                continue inst alu rest
-            | ADDR (r1,r2) when isZero r1 ->
-                let alu1 = zero alu r1
-                let alu1 = zero alu r2
-                let alu2 = nonzero alu r1
-                let alu2 = nonzero alu r2
-                let res1 = continue inst alu1 rest
-                let res2 = continue inst alu2 rest
-                res1
-            | ADDR (r1,r2) ->
-                let alu = unknown alu r1
-                continue inst alu rest
-            | MULI (r1,_) ->
-                continue inst alu rest
-            | MULR (r1,r2) when isNonZero r1 && isZero r2 ->
-                fail inst 
-             | MULR (r1,r2) when isNonZero r1 && isUnknown r2 ->
-                let alu = nonzero alu r2
-                continue inst alu rest
-             | MULR (r1,r2) when isZero r1 && isZero r2 ->
-                let alu = unknown alu r1
-                continue inst alu rest
-             | MULR _ -> continue inst alu rest
-             | DIVI _ -> continue inst alu rest
-             | MODI _ -> continue inst alu rest
-             | EQLI (r1,CONST 0L) when isZero r1 ->
-                 let alu = nonzero alu r1
-                 continue inst alu rest
-             | EQLI (r1,CONST 0L) when isNonZero r1 -> 
-                 continue inst alu rest
-             | EQLI (r1,_) ->
-                 let alu = unknown alu r1
-                 continue inst alu rest 
-             | EQLR (r1,r2) when isZero r1 && isZero r2 ->
-                 let alu = nonzero alu r1
-                 continue inst alu rest
-             | EQLR (r1,_) ->
-                 let alu = unknown alu r1
-                 continue inst alu rest 
-             | EQLR (r1,r2) when isNonZero r1 -> 
-                 let alu = copyFrom alu r1 r2
-                 continue inst alu rest
-             | SETI (r1,i) when isNonZero r1 && (not (canBeZero i)) ->
-                 continue inst alu rest 
-             | SETI (r1,CONST 0L) when isNonZero r1 ->
-                 fail inst
-             | SETI (r1,value) when isZero r1 && (not (canBeZero value)) ->
-                 fail inst 
-             | SETI (r1,_) ->
-                 let alu = unknown alu r1
-                 continue inst alu rest
-             | SETR (r1,r2) when isZero r1 && isNonZero r2 ->
-                 fail inst 
-             | SETR (r1,r2) when (not (canBeSame r1 r2)) -> 
-                 fail inst 
-             | SETR (r1,r2) when isUnknown r1 ->
-                 let alu = copyFrom alu r1 r2
-                 continue inst alu rest
-             | SETR (r1,r2) when isUnknown r2 ->
-                 let alu = copyFrom alu r2 r1
-                 continue inst alu rest
-             | SETR _ ->
-                 continue inst alu rest 
-             | _ -> failwith $"Not implemented: {inst} " 
-        
-    let initMap = [(Z,0L)] |> Map 
     program |> List.rev
-            |> eval initMap
-            |> Option.map List.rev 
+            |> check (C_ZERO Z) 
+            |> List.rev
+            
+let program4 = checkConstraints program3
 
-let program4 = testBooleanPaths program3
+
+
+
+
+
+    
