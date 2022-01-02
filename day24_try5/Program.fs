@@ -924,7 +924,9 @@ let testRegOddEvenBoth (r:Reg) (con:Constraint) =
               then
                   // printfn $"Before: {con}"a
                   printfn $"{r} is not odd"
-                  let con = C_AND [removeOddEven r true con;C_EVEN r]
+                  let con =
+                      C_AND [removeOddEven r true con;C_EVEN r]
+                      |> propagateFailSuccess
                   // printfn $"After: {con}"
                   con
               else con 
@@ -932,6 +934,7 @@ let testRegOddEvenBoth (r:Reg) (con:Constraint) =
               then
                   printfn $"{r} is not even"
                   let con = C_AND [removeOddEven r false con;C_ODD r]
+                            |> propagateFailSuccess
                   // printfn $"After 2: {con}"
                   con
               else con
@@ -944,14 +947,39 @@ let testAllRegsOddEven (con:Constraint) =
     let con = con |> testRegOddEvenBoth Z
     con 
 
+let rec testZero (reg:Reg) (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map (testZero reg) |> List.contains false |> not
+    | C_OR ors -> ors |> List.map (testZero reg) |> List.contains true
+    | C_ZERO r -> true
+    | C_EQ (r,i) when r = reg && i <> 0L -> false
+    | C_EQ _ -> true
+    | C_GT (r,i) when r = reg && i > -1L -> false
+    | C_GT _ -> true
+    | C_LT (r,i) when r = reg && i < 1L -> false
+    | C_LT _ -> true
+    | C_ODD r when r = reg -> false
+    | C_ODD _ -> true
+    | C_EVEN _ -> true
+    | C_FAIL -> false
+    | C_SUCCESS -> true
+    
+let testZeroes (con:Constraint) =
+    let zw = testZero W con
+    let zx = testZero X con
+    let zy = testZero Y con
+    let zz = testZero Z con
+    printfn $"testZeroes {zw} {zx} {zy} {zz}"
+    
 let purge (con:Constraint) =
     printfn $"Purging {con}"
     let con = con |> propagateFailSuccess
     printfn $"Purged 1 {con}"
     let con = con |> testAllRegsOddEven
     printfn $"Purged 2 {con}"
+    testZeroes con 
     con 
-    
+
 let checkConstraints (program:Program) : Program =
     let rec check (iter:int) (con:Constraint) (program:Program) =
         let con = purge con 
