@@ -864,6 +864,51 @@ let rec propagateFailSuccess (con:Constraint) =
         | _ -> C_OR ors
     | _ -> con 
 
+
+let rec checkBooleans (aluOdds:Map<Reg,bool>) (con:Constraint) : bool = 
+    let odd = aluOdds.TryFind >> ((=) (Some(true)))
+    let even = aluOdds.TryFind >> ((=) (Some(false)))
+    
+    match con with
+    | C_AND ands -> ands |> List.map (checkBooleans aluOdds) |> List.contains false |> not 
+    | C_OR ors -> ors |> List.map (checkBooleans aluOdds) |> List.contains true 
+    | C_ZERO r -> even r 
+    | C_EQ (r,i) when isEven i -> even r
+    | C_EQ (r,i) when isOdd i -> odd r 
+    | C_LT _ -> true 
+    | C_GT _ -> true
+    | C_EVEN r -> even r
+    | C_ODD r -> odd r
+    | C_FAIL -> false
+    | C_SUCCESS -> true 
+
+let allBoolAlts : List<Map<Reg,bool>*Constraint> =
+    let toReg (vals:int) : Map<Reg,bool> =
+        [(W,vals &&& 8 = 1)
+         (X,vals &&& 4 = 1)
+         (Y,vals &&& 2 = 1)
+         (Z,vals &&& 1 = 1)] |> Map
+    let toConst (alu:Map<Reg,bool>) =
+        alu |> Map.toList
+            |> List.map (fun (reg,odd) -> if odd then C_ODD reg else C_EVEN reg) |> C_AND 
+    let toPair (i:int) =
+        let alu = toReg i
+        let con = toConst alu
+        alu,con 
+    [0..15] |> List.map toPair 
+
+let cApplyBoolAlt (alu:Map<Reg,bool>) (boolCon:Constraint) (con:Constraint) =
+    let canBeUsed = checkBooleans alu con 
+    let con = propagateFailSuccess con
+    if canBeUsed then
+        C_AND [con;boolCon]
+    else
+        // remove bools 
+        C_FAIL
+    
+let cApplyAllBoolAlts (con:Constraint) =
+    allBoolAlts |> List.map (fun (alu,boolCon) -> cApplyBoolAlt alu boolCon con)
+
 let purge (con:Constraint) =
     printfn $"Purging {con}"
     let con = propagateFailSuccess con
