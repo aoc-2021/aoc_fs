@@ -480,7 +480,7 @@ let rec pushDownInputs (program:Program) =
                 | EQLR _ -> true
                 | SETI (_,INPUT _) -> false
                 | SETI (r2,_) when r2 = reg ->
-                    failwith $"leftover shawowing: {inst2} shadows {inst}"
+                    failwith $"leftover shadowing: {inst2} shadows {inst}"
                 | SETI _ -> true
                 | SETR (r2,r3) when r2 = reg || r3 = reg ->
                     failwith $"Direct assignment of known value: {r2}<-{r3} following {inst}"
@@ -508,6 +508,7 @@ let canContain (value:Value) (i:int64) =
     | INPUT (_,vals) -> vals |> Map.toList |> List.exists (snd >> (=) i)
     | MULTIPLE s -> s.Contains i
     | RANGE (min,max) -> min <= i && max >= i
+    | INVALID -> false 
 
 let isOdd (i:int64) = i &&& 1L = 1L
 let isEven (i:int64) = i &&& 1L = 0L
@@ -518,6 +519,7 @@ let isOddValue (value:Value) =
     | INPUT (_,vals) -> vals.Values |> Seq.map isOdd |> Seq.contains true
     | MULTIPLE s -> s |> Set.map isOdd |> ((=) (Set.singleton false))
     | RANGE (min,max) -> min <> max
+    | INVALID -> false 
 
 let isEvenValue (value:Value) =
     match value with
@@ -525,6 +527,7 @@ let isEvenValue (value:Value) =
     | INPUT (_,vals) -> vals.Values |> Seq.map isEven |> Seq.contains true
     | MULTIPLE s -> s |> Set.map isEven |> ((=) (Set.singleton false))
     | RANGE (min,max) -> min <> max
+    | INVALID -> false 
 
 let filterValue (value:Value) (f:int64->bool) =
     match value with  
@@ -539,17 +542,20 @@ let filterValue (value:Value) (f:int64->bool) =
 let rec consolidateLossy (value:Value) =
     match value with
     | CONST c -> CONST c
-    | INPUT (i,vals) -> vals.Values |> Set |> MULTIPLE |> consolidateLossy
+    | INPUT (_,vals) -> vals.Values |> Set |> MULTIPLE |> consolidateLossy
     | MULTIPLE s when s.Count = 0 -> INVALID
     | MULTIPLE s when s.Count = 1 -> s |> Set.toList |> List.head |> CONST
     | MULTIPLE _ -> value
     | RANGE (min,max) when min = max -> CONST min
     | RANGE (min,max) when min + 20L > max  -> {min..max} |> Set |> MULTIPLE
-    | RANGE _ -> value 
+    | RANGE _ -> value
+    | INVALID -> INVALID 
 
 type Constraint =
     | C_ZERO of Reg
-    | C_EQ of Reg * int64 
+    | C_ONE of Reg
+    | C_NOT_ZERO of Reg
+    | C_EQ of Reg * int64
     | C_GT of Reg * int64
     | C_GTR of Reg * Reg 
     | C_LT of Reg * int64
@@ -559,11 +565,6 @@ type Constraint =
     | C_OR of List<Constraint>
     | C_SUCCESS
     | C_FAIL 
-
-let unknownConstraint (r1:Reg) =
-    let c1 = C_OR [C_ZERO r1;C_LT (r1,0L);C_GT(r1,0L)]
-    let c2 = C_OR [C_EVEN r1;C_ODD r1]
-    C_AND [c1;c2]
 
 let rec cFindR (reg:Reg) (con:Constraint): Constraint =
     match con with
@@ -593,7 +594,7 @@ let rec cApplyAddr (r1:Reg) (r2:Reg) (con:Constraint): Constraint =
         C_AND [values;oddEvens]
     | C_ZERO _ -> con
     | C_EQ (r,i) when i = 0L -> cApplyAddr r1 r2 (C_ZERO r)
-    | C_EQ (r,i) when r = r1 -> notImpl ()
+    | C_EQ (r,_) when r = r1 -> notImpl ()
     | C_EQ _ -> con
     | C_LT (r,i) when r = r1 ->
          C_OR [C_LT (r1,i+1L);C_LT (r2,i+1L)]
@@ -625,7 +626,7 @@ let rec cApplyAddi (reg:Reg) (value:Value) (con:Constraint) : Constraint =
     | C_OR ors,_ -> ors |> List.map (cApplyAddi reg value) |> C_OR
     | C_AND ands,_ -> ands |> List.map (cApplyAddi reg value) |> C_AND
     | C_ZERO r,CONST c when r = reg -> C_EQ (r,-c)
-    | C_ZERO r,value when r = reg -> failwith $"Not implemented:cApplyAddi {con}"
+    | C_ZERO r,_ when r = reg -> failwith $"Not implemented:cApplyAddi {con}"
     | C_ZERO _,_ -> con
     | C_GT (r,i),value when r = reg ->
         match value with
@@ -638,9 +639,8 @@ let rec cApplyAddi (reg:Reg) (value:Value) (con:Constraint) : Constraint =
         | _ -> failwith $"Not implemented:{con}"
     | C_GT _,_ -> con
  
-        
     | C_GT _,_ -> con 
-    | C_LT (r,i),value when r = reg -> failwith $"Not implemented:cApplyAddi {con}"
+    | C_LT (r,_),_ when r = reg -> failwith $"Not implemented:cApplyAddi {con}"
     | C_LT _,_ -> con
     | C_ODD r,_ when r = reg && allEven -> con
     | C_ODD r,_ when r = reg && allOdd -> C_EVEN r
@@ -660,7 +660,7 @@ let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
     | C_ZERO _ -> con
     | C_EQ (r,i) when r1 = r && i = 0L -> cApplyMulr r1 r2 (C_ZERO r)
     | C_EQ (r,i) when r1 = r && i < 0L ->
-        let aboveBelow = C_AND [C_GT (r1,0L);(C_LT (r2,0L))]
+        let aboveBelow = C_AND [C_GT (r1,0L);(C_LT(r2,0L))]
         let belowAbove = C_AND [C_LT (r1,0L);(C_GT (r2,0L))]
         let range = C_OR [aboveBelow;belowAbove]
         let oddEven =
@@ -807,13 +807,13 @@ let rec cApplyDivi (reg:Reg) (value:int64) (con:Constraint) =
         C_AND [C_EVEN r;C_GT (r,i*value)]
     | C_GT (r,i) when r = reg && value > 0 && isOdd value ->
         C_GT (r,i*value)
-    | C_GT (r,i) when r = reg -> failwith $"Not implemented: {con}"
+    | C_GT (r,_) when r = reg -> failwith $"Not implemented: {con}"
     | C_GT _ -> con
     | C_LT (r,i) when r = reg && value > 0 && isEven value ->
         C_AND [C_EVEN r;C_LT (r,i*value)]
     | C_GT (r,i) when r = reg && i > 0 && value > 0 && isOdd value ->
         C_LT (r,i*value)
-    | C_LT (r,i) when r = reg -> failwith $"Not implemented: {con}"
+    | C_LT (r,_) when r = reg -> failwith $"Not implemented: {con}"
     | C_LT _ -> con
     | C_EVEN _ -> con 
     | C_ODD r when r = reg && isEven value -> C_FAIL
@@ -832,12 +832,12 @@ let rec cApplyModi (reg:Reg) (value:int64) (con:Constraint) =
     | C_EQ (r,i) when r = reg && isEven i && isEven value -> C_AND [C_EVEN r;C_GT (reg,i-1L)]
     | C_EQ (r,i) when r = reg && isOdd i -> C_GT (reg,i-1L)
     | C_EQ (r,i) when r = reg && isOdd value -> C_GT (reg,i-1L)
-    | C_EQ (r,i) when r = reg -> failwith $"Not implemented {con}"
+    | C_EQ (r,_) when r = reg -> failwith $"Not implemented {con}"
     | C_EQ _ -> con 
     | C_LT (r,i) when r = reg && i <= 0L -> C_FAIL
     | C_LT (r,i) when r = reg && i = 1L -> cApplyModi reg value (C_EQ (reg,0L))
     | C_LT (r,i) when r = reg && i > 0L -> con
-    | C_LT (r,i) when r = reg -> failwith $"Not implemented {con}"
+    | C_LT (r,_) when r = reg -> failwith $"Not implemented {con}"
     | C_LT _ -> con
     | C_GT (r,i) when reg = r && i < 0L ->
         let cz = cApplyModi reg value (C_ZERO r)
@@ -951,7 +951,7 @@ let rec testZero (reg:Reg) (con:Constraint) =
     match con with
     | C_AND ands -> ands |> List.map (testZero reg) |> List.contains false |> not
     | C_OR ors -> ors |> List.map (testZero reg) |> List.contains true
-    | C_ZERO r -> true
+    | C_ZERO _ -> true
     | C_EQ (r,i) when r = reg && i <> 0L -> false
     | C_EQ _ -> true
     | C_GT (r,i) when r = reg && i > -1L -> false
@@ -963,22 +963,150 @@ let rec testZero (reg:Reg) (con:Constraint) =
     | C_EVEN _ -> true
     | C_FAIL -> false
     | C_SUCCESS -> true
-    
-let testZeroes (con:Constraint) =
+
+let rec testNotZero (reg:Reg) (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map (testNotZero reg) |> List.contains false |> not
+    | C_OR ors -> ors |> List.map (testNotZero reg) |> List.contains true
+    | C_ZERO r when r = reg -> false
+    | C_ZERO _ -> true 
+    | C_EQ (r,i) when r = reg -> i <> 0L 
+    | C_EQ _ -> true
+    | C_GT _ -> true
+    | C_LT _ -> true
+    | C_ODD _ -> true
+    | C_EVEN _ -> true
+    | C_FAIL -> false
+    | C_SUCCESS -> true
+
+let rec enforceNotZero (reg:Reg) (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map (enforceNotZero reg) |> C_AND
+    | C_OR ors -> ors |> List.map (enforceNotZero reg) |> C_OR
+    | C_ZERO r when r = reg -> C_FAIL
+    | C_ZERO _ -> con
+    | C_EQ (r,i) when r = reg && i = 0L -> C_FAIL
+    | C_EQ _ -> con 
+    | C_GT (r,i) when r = reg && i = -1L -> C_GT (r,0L)
+    | C_GT _ -> con
+    | C_LT (r,i) when r = reg && i = 1L -> C_LT (r,0L)
+    | C_LT _ -> con
+    | C_EVEN _ -> con
+    | C_ODD _ -> con
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS 
+
+let rec enforceZero (reg:Reg) (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map (enforceZero reg) |> C_AND
+    | C_OR ors -> ors |> List.map (enforceZero reg) |> C_OR
+    | C_ZERO r when r = reg -> con
+    | C_ZERO _ -> con 
+    | C_EQ (r,0L) when r = reg -> C_SUCCESS
+    | C_EQ (r,_) when r = reg -> C_FAIL
+    | C_EQ _ -> con
+    | C_GT (r,i) when r = reg && i < 0L -> C_SUCCESS
+    | C_GT (r,_) when r = reg -> C_FAIL
+    | C_GT _ -> con
+    | C_LT (r,i) when r = reg && i > 0L -> C_SUCCESS
+    | C_LT (r,_) when r = reg -> C_FAIL
+    | C_LT _ -> con
+    | C_EVEN r when r = reg -> C_SUCCESS
+    | C_EVEN _ -> con 
+    | C_ODD r when r = reg -> C_FAIL
+    | C_ODD _ -> con 
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS
+    | _ -> failwith $"Not implemented {reg} {con}"
+ 
+let checkZeroes (con:Constraint) =
     let zw = testZero W con
     let zx = testZero X con
     let zy = testZero Y con
     let zz = testZero Z con
+    let con = if not zw then enforceNotZero Z con else con
+    let con = if not zx then enforceNotZero X con else con
+    let con = if not zy then enforceNotZero Y con else con
+    let con = if not zz then enforceNotZero Z con else con 
     printfn $"testZeroes {zw} {zx} {zy} {zz}"
+    con 
+
+let testNotZeroes (con:Constraint) =
+    let zw = testNotZero W con
+    let zx = testNotZero X con
+    let zy = testNotZero Y con
+    let zz = testNotZero Z con
+    let con = if zw then con else enforceZero W con
+    let con = if zx then con else enforceZero X con
+    let con = if zy then con else enforceZero Y con
+    let con = if zz then con else enforceZero Z con 
+    printfn $"testNotZeroes {zw} {zx} {zy} {zz}"
+    con
+
+let rec flatten (con:Constraint) =
+    let is_and (c:Constraint) =
+        match c with
+        | C_AND _ -> true
+        | _ -> false
+    let is_or (c:Constraint) =
+        match c with
+        | C_OR _ -> true
+        | _ -> false 
+    match con with
+    | C_AND ands ->
+        let ands = ands |> List.map flatten
+        let subs = ands |> List.filter is_and
+        if subs.Length > 0 then
+            let rest = ands |> List.filter (is_and >> not)
+            let subs = subs |> List.map (fun (C_AND l) -> l)
+            let ands = rest :: subs |> List.concat
+            C_AND ands
+        else C_AND ands 
+    | C_OR ors ->
+        let ors = ors |> List.map flatten
+        let subs = ors |> List.filter is_or
+        if subs.Length > 0 then
+            let rest = ors |> List.filter (is_or >> not)
+            let subs = subs |> List.map (fun (C_OR l) -> l)
+            let ors = rest :: subs |> List.concat
+            C_OR ors
+        else C_OR ors 
+    | _ -> con  
     
 let purge (con:Constraint) =
-    printfn $"Purging {con}"
+    // printfn $"Purging {con}"
     let con = con |> propagateFailSuccess
-    printfn $"Purged 1 {con}"
+    // printfn $"Purged 1 {con}"
     let con = con |> testAllRegsOddEven
-    printfn $"Purged 2 {con}"
-    testZeroes con 
+    // printfn $"Purged 2 {con}"
+    // let con = checkZeroes con
+    testNotZeroes con
+    let con = flatten con 
+    // printfn $"Flatten {flatten con}"
     con 
+
+let rec testValue (reg:Reg) (value:int64) (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map (testValue reg value) |> List.contains false |> not
+    | C_OR ors -> ors |> List.map (testValue reg value) |> List.contains true
+    | C_ZERO r when r = reg -> value = 0L
+    | C_EQ (r,i) when r = reg -> value = i
+    | C_GT (r,i) when r = reg -> i < value
+    | C_LT (r,i) when r = reg -> i > value
+    | C_ODD r when r = reg -> isOdd value
+    | C_EVEN r when r = reg -> isEven value
+    | C_SUCCESS -> true
+    | C_FAIL -> false
+    | _ -> true 
+
+let filterInput (reg:Reg) (input:Value) (con:Constraint) =
+    printfn $"FILTERING {reg} {input} for {con}"
+    match input with
+    | INPUT (i,vals) ->
+        let vals = vals |> Map.filter (fun _ value -> testValue reg value con)
+        INPUT (i,vals)
+    | CONST _ -> input 
+    | _ -> failwith $"Not implemented: {input}"
 
 let checkConstraints (program:Program) : Program =
     let rec check (iter:int) (con:Constraint) (program:Program) =
@@ -1001,6 +1129,11 @@ let checkConstraints (program:Program) : Program =
                 let con = cApplyMulr r1 r2 con
                 cont con 
             | SETI (r1,value) ->
+                printfn "***************************"
+                printfn $"ORIGINAL INPUT: {value |> v2s}"
+                let value = filterInput r1 value con 
+                printfn $"FILTERED INPUT: {value |> v2s}"
+                printfn "***************************"
                 let newCon = cApplySeti r1 value con
                 cont con 
             | EQLI (r,value) ->
@@ -1022,10 +1155,3 @@ let checkConstraints (program:Program) : Program =
             |> List.rev
             
 let program4 = checkConstraints program3
-
-
-
-
-
-
-    
