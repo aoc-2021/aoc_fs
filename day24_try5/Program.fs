@@ -648,7 +648,8 @@ let rec cApplyAddi (reg:Reg) (value:Value) (con:Constraint) : Constraint =
     | C_EVEN r,_ when r = reg && allEven -> con
     | C_EVEN r,_ when r = reg && allOdd -> C_ODD r
     | C_EVEN _,_ -> con
-    | C_FAIL,_ -> C_FAIL  
+    | C_FAIL,_ -> C_FAIL
+    | C_SUCCESS,_ -> C_SUCCESS
     | _ -> failwith $"Not implemented:cApplyAddi {con}" 
         
 let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
@@ -689,7 +690,8 @@ let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
     | C_ODD _ -> con
     | C_EVEN r when r = r1 -> C_OR [C_EVEN r1;C_EVEN r2]
     | C_EVEN _ -> con
-    | C_FAIL -> C_FAIL 
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS
     | _ -> failwith $"Not implemented: {con}"
 
 let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
@@ -723,7 +725,7 @@ let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
         else C_FAIL 
     | C_EVEN _ -> con
     | C_FAIL -> C_FAIL 
-       
+    | C_SUCCESS -> C_SUCCESS  
     | _ -> failwith $"Not implemented: {con}"
 
 let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
@@ -752,7 +754,11 @@ let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
     | C_LT (r,i) when r = reg && i > 1L -> C_SUCCESS
     | C_LT _ -> con
     | C_ODD r -> cApplyEqli reg value (C_EQ (r,0L))
+    | C_ODD _ -> con 
     | C_EVEN r -> cApplyEqli reg value (C_ZERO r)
+    | C_EVEN _ -> con
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS 
     | _ -> failwith $"Not implemented {con}"
 
 let rec cApplyEqlr r1 r2 (con:Constraint) =
@@ -781,9 +787,14 @@ let rec cApplyEqlr r1 r2 (con:Constraint) =
     | C_LT (r,i) when r = r1 && i > 1L -> C_SUCCESS 
     | C_LT (r,1L) when r = r1 -> cApplyEqlr r1 r2 (C_ZERO r)
     | C_LT (r,i) when r = r1 && i < 1L -> C_FAIL
-    | C_LT _ -> con 
+    | C_LT _ -> con
+    | C_EVEN r when r = r1 -> cApplyEqlr r1 r2 (C_ZERO r)
+    | C_EVEN _ -> con 
+    | C_ODD r when r = r1 -> cApplyEqlr r1 r2 (C_EQ(r,1L))
+    | C_ODD _ -> con
+    | C_SUCCESS -> C_SUCCESS
     | C_FAIL -> C_FAIL 
-    | _ -> failwith $"Not implemented {con}"
+    | _ -> failwith $"Not implemented {r1} {r2} {con}"
 
 let rec cApplyDivi (reg:Reg) (value:int64) (con:Constraint) =
     match con with
@@ -864,95 +875,122 @@ let rec propagateFailSuccess (con:Constraint) =
         | _ -> C_OR ors
     | _ -> con 
 
-
-let rec checkBooleans (aluOdds:Map<Reg,bool>) (con:Constraint) : bool = 
-    let odd = aluOdds.TryFind >> ((=) (Some(true)))
-    let even = aluOdds.TryFind >> ((=) (Some(false)))
-    
+let rec testRegOddEven (reg:Reg) (odd:bool) (con:Constraint) : bool =
+    let even = not odd 
     match con with
-    | C_AND ands -> ands |> List.map (checkBooleans aluOdds) |> List.contains false |> not 
-    | C_OR ors -> ors |> List.map (checkBooleans aluOdds) |> List.contains true 
-    | C_ZERO r -> even r 
-    | C_EQ (r,i) when isEven i -> even r
-    | C_EQ (r,i) when isOdd i -> odd r 
-    | C_LT _ -> true 
+    | C_AND ands -> ands |> List.map (testRegOddEven reg odd) |> List.contains false |> not 
+    | C_OR ors -> ors |> List.map (testRegOddEven reg odd) |> List.contains true 
+    | C_ZERO r when r = reg -> even
+    | C_ZERO _ -> true
+    | C_EQ (r,i) when r = reg && isOdd i -> odd
+    | C_EQ (r,i) when r = reg && isEven i -> even
+    | C_EQ _ -> true 
+    | C_LT _ -> true
     | C_GT _ -> true
-    | C_EVEN r -> even r
-    | C_ODD r -> odd r
+    | C_ODD r when r = reg -> odd
+    | C_ODD _ -> true
+    | C_EVEN r when r = reg -> even
+    | C_EVEN _ -> true
     | C_FAIL -> false
-    | C_SUCCESS -> true 
+    | C_SUCCESS -> true
+    | _ -> failwith $"Missing {con}"
 
-let allBoolAlts : List<Map<Reg,bool>*Constraint> =
-    let toReg (vals:int) : Map<Reg,bool> =
-        [(W,vals &&& 8 = 1)
-         (X,vals &&& 4 = 1)
-         (Y,vals &&& 2 = 1)
-         (Z,vals &&& 1 = 1)] |> Map
-    let toConst (alu:Map<Reg,bool>) =
-        alu |> Map.toList
-            |> List.map (fun (reg,odd) -> if odd then C_ODD reg else C_EVEN reg) |> C_AND 
-    let toPair (i:int) =
-        let alu = toReg i
-        let con = toConst alu
-        alu,con 
-    [0..15] |> List.map toPair 
+let rec removeOddEven (reg:Reg) (odd:bool) (con:Constraint) : Constraint =
+    // printfn $"removeOddEven {reg} {odd} {con}"
+    let even = not odd 
+    match con with
+    | C_AND ands -> ands |> List.map (removeOddEven reg odd) |> C_AND 
+    | C_OR ors -> ors |> List.map (removeOddEven reg odd) |> C_OR
+    | C_ZERO r when r = reg -> if even then C_FAIL else con
+    | C_ZERO _ -> con 
+    | C_EQ (r,i) when r = reg && isEven i && even -> C_FAIL
+    | C_EQ (r,i) when r = reg && isOdd i && odd -> C_FAIL
+    | C_EQ _ -> con
+    | C_GT _ -> con
+    | C_LT _ -> con
+    | C_ODD r when r = reg -> if odd then C_FAIL else C_SUCCESS
+    | C_ODD _ -> con
+    | C_EVEN r when r = reg -> if even then C_FAIL else C_SUCCESS
+    | C_EVEN _ -> con 
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS
+    | _ -> failwith $"Missing {con}"
 
-let cApplyBoolAlt (alu:Map<Reg,bool>) (boolCon:Constraint) (con:Constraint) =
-    let canBeUsed = checkBooleans alu con 
-    let con = propagateFailSuccess con
-    if canBeUsed then
-        C_AND [con;boolCon]
-    else
-        // remove bools 
-        C_FAIL
-    
-let cApplyAllBoolAlts (con:Constraint) =
-    allBoolAlts |> List.map (fun (alu,boolCon) -> cApplyBoolAlt alu boolCon con)
+let testRegOddEvenBoth (r:Reg) (con:Constraint) =
+    let oddOK = testRegOddEven r true con
+    let evenOK = testRegOddEven r false con
+    if (not oddOK && not evenOK) then failwith $"impossible! {con}"
+    let con = if not oddOK
+              then
+                  // printfn $"Before: {con}"a
+                  printfn $"{r} is not odd"
+                  let con = C_AND [removeOddEven r true con;C_EVEN r]
+                  // printfn $"After: {con}"
+                  con
+              else con 
+    let con = if not evenOK
+              then
+                  printfn $"{r} is not even"
+                  let con = C_AND [removeOddEven r false con;C_ODD r]
+                  // printfn $"After 2: {con}"
+                  con
+              else con
+    con
+
+let testAllRegsOddEven (con:Constraint) =
+    let con = con |> testRegOddEvenBoth W 
+    let con = con |> testRegOddEvenBoth X 
+    let con = con |> testRegOddEvenBoth Y 
+    let con = con |> testRegOddEvenBoth Z
+    con 
 
 let purge (con:Constraint) =
     printfn $"Purging {con}"
-    let con = propagateFailSuccess con
-    printfn $"Purged {con}"
+    let con = con |> propagateFailSuccess
+    printfn $"Purged 1 {con}"
+    let con = con |> testAllRegsOddEven
+    printfn $"Purged 2 {con}"
     con 
     
 let checkConstraints (program:Program) : Program =
-    let rec check (con:Constraint) (program:Program) =
+    let rec check (iter:int) (con:Constraint) (program:Program) =
         let con = purge con 
         match program with
         [] -> []
         | inst :: rest ->
-            printfn $"Checking: {inst}"
-            printfn $"Constraint: {con}"
-            printfn "--"
+            printfn $"Checking [{iter}: {inst}"
+            // printfn $"Constraint: {con}"
+            // printfn "--"
+            let cont (con:Constraint) = check (iter + 1) con rest
             match inst with
             | ADDR (r1,r2) ->
                 let con = cApplyAddr r1 r2 con 
-                check con rest
+                cont con 
             | ADDI (r1,i) ->
                 let con = cApplyAddi r1 i con
-                check con rest
+                cont con
             | MULR (r1,r2) ->
                 let con = cApplyMulr r1 r2 con
-                check con rest
+                cont con 
             | SETI (r1,value) ->
                 let newCon = cApplySeti r1 value con
-                check con rest
+                cont con 
             | EQLI (r,value) ->
                 let con = cApplyEqli r value con
-                check con rest
+                cont con
             | EQLR (r1,r2) ->
                 let con = cApplyEqlr r1 r2 con
-                check con rest
+                cont con 
             | DIVI (r1,i) ->
                 let con = cApplyDivi r1 i con
-                check con rest
+                cont con 
             | MODI (r1,i) ->
                 let con = cApplyModi r1 i con
-                check con rest 
+                cont con 
             | _ -> failwith $"Not implemented {inst}"
             
     program |> List.rev
-            |> check (C_ZERO Z) 
+            |> check 0 (C_ZERO Z) 
             |> List.rev
             
 let program4 = checkConstraints program3
