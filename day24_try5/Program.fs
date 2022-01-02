@@ -553,11 +553,8 @@ let rec consolidateLossy (value:Value) =
 
 type Constraint =
     | C_ZERO of Reg
-    | C_ONE of Reg
-    | C_NOT_ZERO of Reg
     | C_EQ of Reg * int64
     | C_GT of Reg * int64
-    | C_GTR of Reg * Reg 
     | C_LT of Reg * int64
     | C_ODD of Reg
     | C_EVEN of Reg
@@ -565,6 +562,19 @@ type Constraint =
     | C_OR of List<Constraint>
     | C_SUCCESS
     | C_FAIL 
+
+let bothPositive(r1:Reg) (r2:Reg) = C_AND [C_GT(r1,0L);C_GT(r2,0L)]
+let bothNegative(r1:Reg) (r2:Reg) = C_AND [C_LT(r1,0L);C_GT(r2,0L)]
+let bothZero (r1:Reg )(r2:Reg) = C_AND [C_ZERO r1;C_ZERO r2]
+let sameSignNZ (r1:Reg) (r2:Reg) = C_OR [bothPositive r1 r2;bothNegative r1 r2]
+
+let oppositeSignNZ (r1:Reg) (r2:Reg) =
+    C_OR
+        [C_AND [C_GT (r1,0L);C_LT (r2,0L)]
+         C_AND [C_LT (r1,0L);C_GT (r2,0L)]]
+
+let bothEven (r1:Reg) (r2:Reg) = C_AND [C_EVEN r1;C_EVEN r2]
+let bothOdd (r1:Reg) (r2:Reg) = C_AND [C_ODD r1;C_ODD r2]
 
 let rec cFindR (reg:Reg) (con:Constraint): Constraint =
     match con with
@@ -584,12 +594,11 @@ let rec cApplyAddr (r1:Reg) (r2:Reg) (con:Constraint): Constraint =
     | C_OR ors -> ors |> List.map (cApplyAddr r1 r2) |> C_OR
     | C_AND ands -> ands |> List.map (cApplyAddr r1 r2) |> C_AND
     | C_ZERO r when r = r1 ->
-        let bothZero = C_AND [(C_ZERO r1);(C_ZERO r2)]
-        let plusMinus = C_AND [C_GT (r1,0L);C_LT (r2,0L)]
-        let minusPlus = C_AND [C_LT (r1,0L);C_GT (r2,0L)]
-        let values = C_OR [bothZero;plusMinus;minusPlus]
-        let odds = C_AND [C_ODD r1;C_ODD r2]
-        let evens = C_AND [C_EVEN r1;C_EVEN r2]
+        let bothZero = C_AND [C_ZERO r1;C_ZERO r2]
+        let opposites = oppositeSignNZ r1 r2 
+        let values = C_OR [bothZero;opposites]
+        let odds = bothOdd r1 r2 
+        let evens = bothEven r1 r2 
         let oddEvens = C_OR [odds;evens]
         C_AND [values;oddEvens]
     | C_ZERO _ -> con
@@ -606,8 +615,8 @@ let rec cApplyAddr (r1:Reg) (r2:Reg) (con:Constraint): Constraint =
     | C_GT (r,i) when r = r1 && i < 0L -> C_OR [C_LT (r1,i+1L);C_LT (r2,i+1L)]
     | C_GT _ -> con
     | C_EVEN r when r = r1 ->
-        let even = C_AND [C_EVEN r1;C_EVEN r2]
-        let odd = C_AND [C_ODD r1;C_ODD r2]
+        let even = bothEven r1 r2 
+        let odd = bothOdd r1 r2
         C_OR [even;odd]
     | C_EVEN _ -> con 
     | C_ODD r when r = r1 ->
@@ -660,33 +669,25 @@ let rec cApplyMulr (r1:Reg) (r2:Reg) (con:Constraint) : Constraint =
     | C_ZERO _ -> con
     | C_EQ (r,i) when r1 = r && i = 0L -> cApplyMulr r1 r2 (C_ZERO r)
     | C_EQ (r,i) when r1 = r && i < 0L ->
-        let aboveBelow = C_AND [C_GT (r1,0L);(C_LT(r2,0L))]
-        let belowAbove = C_AND [C_LT (r1,0L);(C_GT (r2,0L))]
-        let range = C_OR [aboveBelow;belowAbove]
+        let range = oppositeSignNZ r1 r2 
         let oddEven =
-            if isOdd i then C_AND [C_ODD r1;C_ODD r2]
+            if isOdd i then bothOdd r1 r2
             else C_OR [C_EVEN r1;C_EVEN r2]
         C_AND [range;oddEven]
     | C_EQ (r,i) when r1 = r && i > 0L ->
-        let above = C_AND [C_GT (r1,0L);(C_GT (r2,0L))]
-        let below = C_AND [C_LT (r1,0L);(C_LT (r2,0L))]
-        let range = C_OR [above;below]
+        let range = sameSignNZ r1 r2 
         let oddEven =
-            if isOdd i then C_AND [C_ODD r1;C_ODD r2]
+            if isOdd i then bothOdd r1 r2
             else C_OR [C_EVEN r1;C_EVEN r2]
         C_AND [range;oddEven]
     | C_EQ _ -> con 
     | C_GT (r,i) when r = r1 && i >= 0L ->
-        let bothAbove = C_AND [C_GT (r1,0L);(C_GT (r2,0L))]
-        let bothBelow = C_AND [C_LT (r1,0L);(C_LT (r2,0L))]
-        C_OR [bothAbove;bothBelow]
+        sameSignNZ r1 r2 
     | C_GT _ -> con
     | C_LT (r,i) when r = r1 && i <= 0L ->
-        let aboveBelow = C_AND [C_GT (r1,0L);(C_LT (r2,0L))]
-        let belowAbove = C_AND [C_LT (r1,0L);(C_GT (r2,0L))]
-        C_OR [aboveBelow;belowAbove]
+        oppositeSignNZ r1 r2
     | C_LT _ -> con
-    | C_ODD r when r = r1 -> C_AND [C_ODD r1;C_ODD r2]
+    | C_ODD r when r = r1 -> bothOdd r1 r2 
     | C_ODD _ -> con
     | C_EVEN r when r = r1 -> C_OR [C_EVEN r1;C_EVEN r2]
     | C_EVEN _ -> con
@@ -1079,8 +1080,8 @@ let purge (con:Constraint) =
     // printfn $"Purged 1 {con}"
     let con = con |> testAllRegsOddEven
     // printfn $"Purged 2 {con}"
-    // let con = checkZeroes con
-    testNotZeroes con
+    let con = checkZeroes con
+    let con = testNotZeroes con
     let con = flatten con 
     // printfn $"Flatten {flatten con}"
     con 
@@ -1100,7 +1101,7 @@ let rec testValue (reg:Reg) (value:int64) (con:Constraint) =
     | _ -> true 
 
 let filterInput (reg:Reg) (input:Value) (con:Constraint) =
-    printfn $"FILTERING {reg} {input} for {con}"
+    printfn $"FILTERING {reg} {input |> v2s} for {con}"
     match input with
     | INPUT (i,vals) ->
         let vals = vals |> Map.filter (fun _ value -> testValue reg value con)
@@ -1114,7 +1115,8 @@ let checkConstraints (program:Program) : Program =
         match program with
         [] -> []
         | inst :: rest ->
-            printfn $"Checking [{iter}: {inst}"
+            printfn $"Checking [{iter}:"
+            printInstruction inst 
             // printfn $"Constraint: {con}"
             // printfn "--"
             let cont (con:Constraint) = check (iter + 1) con rest
@@ -1135,7 +1137,7 @@ let checkConstraints (program:Program) : Program =
                 printfn $"FILTERED INPUT: {value |> v2s}"
                 printfn "***************************"
                 let newCon = cApplySeti r1 value con
-                cont con 
+                cont newCon 
             | EQLI (r,value) ->
                 let con = cApplyEqli r value con
                 cont con
