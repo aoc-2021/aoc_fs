@@ -557,7 +557,7 @@ type Constraint =
     | C_EVEN of Reg
     | C_AND of List<Constraint>
     | C_OR of List<Constraint>
-    | C_NONE
+    | C_SUCCESS
     | C_FAIL 
 
 let unknownConstraint (r1:Reg) =
@@ -575,10 +575,13 @@ let rec cFindR (reg:Reg) (con:Constraint): Constraint =
     | C_EQ (r1,_) when r1 = reg -> con
     | C_AND cs -> cs |> List.map (cFindR reg) |> C_AND 
     | C_OR cs -> cs |> List.map (cFindR reg) |> C_OR
-    | _ -> C_NONE 
+    | _ -> C_SUCCESS 
     
-let rec cApplyAddr (con:Constraint) (r1:Reg) (r2:Reg) : Constraint =
+let rec cApplyAddr (r1:Reg) (r2:Reg) (con:Constraint): Constraint =
+    let notImpl () = failwith $"Not implemented: {r1} {r2} {con}"
     match con with
+    | C_OR ors -> ors |> List.map (cApplyAddr r1 r2) |> C_OR
+    | C_AND ands -> ands |> List.map (cApplyAddr r1 r2) |> C_AND
     | C_ZERO r when r = r1 ->
         let bothZero = C_AND [(C_ZERO r1);(C_ZERO r2)]
         let plusMinus = C_AND [C_GT (r1,0L);C_LT (r2,0L)]
@@ -588,8 +591,32 @@ let rec cApplyAddr (con:Constraint) (r1:Reg) (r2:Reg) : Constraint =
         let evens = C_AND [C_EVEN r1;C_EVEN r2]
         let oddEvens = C_OR [odds;evens]
         C_AND [values;oddEvens]
-    | C_EQ (r,i) when i = 0L -> cApplyAddr (C_ZERO r) r1 r2
-    | _ -> failwith $"Not implemented: cApplyAddr {con}"
+    | C_ZERO _ -> con
+    | C_EQ (r,i) when i = 0L -> cApplyAddr r1 r2 (C_ZERO r)
+    | C_EQ (r,i) when r = r1 -> notImpl ()
+    | C_EQ _ -> con
+    | C_LT (r,i) when r = r1 ->
+         C_OR [C_LT (r1,i+1L);C_LT (r2,i+1L)]
+    | C_LT _ -> con
+    | C_GT (r,i) when r = r1 && i >= 0L ->
+        let onePositive = C_OR [C_GT (r1,0L);C_GT (r2,0L)]
+        let summedBySmaller = C_OR [C_LT (r1,i+1L);C_LT (r2,i+1L)]
+        C_AND [onePositive;summedBySmaller]
+    | C_GT (r,i) when r = r1 && i < 0L -> C_OR [C_LT (r1,i+1L);C_LT (r2,i+1L)]
+    | C_GT _ -> con
+    | C_EVEN r when r = r1 ->
+        let even = C_AND [C_EVEN r1;C_EVEN r2]
+        let odd = C_AND [C_ODD r1;C_ODD r2]
+        C_OR [even;odd]
+    | C_EVEN _ -> con 
+    | C_ODD r when r = r1 ->
+        let oddEven = C_AND [C_ODD r1;C_EVEN r2]
+        let evenOdd = C_AND [C_EVEN r1;C_ODD r2]
+        C_OR [oddEven;evenOdd]
+    | C_ODD _ -> con 
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS 
+    | _ -> notImpl ()
 
 let rec cApplyAddi (reg:Reg) (value:Value) (con:Constraint) : Constraint =
     let allEven = value |> isOddValue |> not
@@ -671,28 +698,28 @@ let rec cApplySeti (reg:Reg) (value:Value) (con:Constraint) =
     | C_OR ors -> ors |> List.map (cApplySeti reg value) |> C_OR
     | C_ZERO r when r = reg ->
         if canContain value 0L then
-            C_NONE
+            C_SUCCESS
         else
             C_FAIL 
     | C_ZERO _ -> con
     | C_GT (r, i) when r = reg ->
         if largest value > i then
-            C_NONE
+            C_SUCCESS
         else
             C_FAIL
     | C_GT _ -> con 
     | C_LT (r, i) when r = reg ->
         if smallest value < i then
-            C_NONE
+            C_SUCCESS
         else
             C_FAIL
     | C_LT _ -> con
     | C_ODD r when r = reg ->
-        if isOddValue value then C_NONE
+        if isOddValue value then C_SUCCESS
         else C_FAIL 
     | C_ODD _ -> con 
     | C_EVEN r when r = reg ->
-        if isEvenValue value then C_NONE
+        if isEvenValue value then C_SUCCESS
         else C_FAIL 
     | C_EVEN _ -> con
     | C_FAIL -> C_FAIL 
@@ -706,7 +733,7 @@ let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
 
     | C_ZERO r when r = reg && value = (CONST 0L) ->
         C_OR [C_GT (r,0L);C_LT (r,0L)]
-    | C_ZERO r when r = reg -> C_NONE 
+    | C_ZERO r when r = reg -> C_SUCCESS 
     | C_ZERO _ -> con
     | C_EQ (r,1L) when r= reg ->
         match value with
@@ -718,11 +745,11 @@ let rec cApplyEqli (reg:Reg) (value:Value) (con:Constraint) =
     | C_EQ (r,0L) -> cApplyEqli reg value (C_ZERO r) 
     | C_GT (r,1L) when r = reg -> C_FAIL
     | C_GT (r,0L) when r = reg -> cApplyEqli reg value (C_EQ (r,1L))
-    | C_GT (r,i) when r = reg && i < 0L -> C_NONE
+    | C_GT (r,i) when r = reg && i < 0L -> C_SUCCESS
     | C_GT _ -> con  
     | C_LT (r,0L) when r = reg -> C_FAIL
     | C_LT (r,1L) when r = reg -> cApplyEqli reg value (C_ZERO r)
-    | C_LT (r,i) when r = reg && i > 1L -> C_NONE
+    | C_LT (r,i) when r = reg && i > 1L -> C_SUCCESS
     | C_LT _ -> con
     | C_ODD r -> cApplyEqli reg value (C_EQ (r,0L))
     | C_EVEN r -> cApplyEqli reg value (C_ZERO r)
@@ -749,17 +776,103 @@ let rec cApplyEqlr r1 r2 (con:Constraint) =
         C_AND [value;bools]
     | C_GT (r,i) when r = r1 && i > 0L -> C_FAIL 
     | C_GT (r,0L) when r = r1 -> cApplyEqlr r1 r2 (C_EQ (r,1L))
-    | C_GT (r,i) when r = r1 && i < 1L -> C_NONE
+    | C_GT (r,i) when r = r1 && i < 1L -> C_SUCCESS
     | C_GT _ -> con 
-    | C_LT (r,i) when r = r1 && i > 1L -> C_NONE 
+    | C_LT (r,i) when r = r1 && i > 1L -> C_SUCCESS 
     | C_LT (r,1L) when r = r1 -> cApplyEqlr r1 r2 (C_ZERO r)
     | C_LT (r,i) when r = r1 && i < 1L -> C_FAIL
     | C_LT _ -> con 
     | C_FAIL -> C_FAIL 
     | _ -> failwith $"Not implemented {con}"
 
+let rec cApplyDivi (reg:Reg) (value:int64) (con:Constraint) =
+    match con with
+    | C_OR ors -> ors |> List.map (cApplyDivi reg value) |> C_OR
+    | C_AND ands -> ands |> List.map (cApplyDivi reg value) |> C_AND
+    | C_ZERO _ -> con
+    | C_EQ (r,i) when r = reg -> C_EQ (reg,i*value)
+    | C_EQ _ -> con 
+    | C_GT (r,i) when r = reg && value > 0 && isEven value ->
+        C_AND [C_EVEN r;C_GT (r,i*value)]
+    | C_GT (r,i) when r = reg && value > 0 && isOdd value ->
+        C_GT (r,i*value)
+    | C_GT (r,i) when r = reg -> failwith $"Not implemented: {con}"
+    | C_GT _ -> con
+    | C_LT (r,i) when r = reg && value > 0 && isEven value ->
+        C_AND [C_EVEN r;C_LT (r,i*value)]
+    | C_GT (r,i) when r = reg && i > 0 && value > 0 && isOdd value ->
+        C_LT (r,i*value)
+    | C_LT (r,i) when r = reg -> failwith $"Not implemented: {con}"
+    | C_LT _ -> con
+    | C_EVEN _ -> con 
+    | C_ODD r when r = reg && isEven value -> C_FAIL
+    | C_ODD _ -> con
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS 
+    | _ -> failwith $"Not implemented {con}"
+
+let rec cApplyModi (reg:Reg) (value:int64) (con:Constraint) =
+    match con with
+    | C_OR ors -> ors |> List.map (cApplyModi reg value) |> C_OR
+    | C_AND ands -> ands |> List.map (cApplyModi reg value) |> C_AND
+    | C_ZERO _ -> con
+    | C_EQ (r,i) when r = reg && i < 0 -> C_FAIL
+    | C_EQ (r,i) when r = reg && i >= value -> C_FAIL
+    | C_EQ (r,i) when r = reg && isEven i && isEven value -> C_AND [C_EVEN r;C_GT (reg,i-1L)]
+    | C_EQ (r,i) when r = reg && isOdd i -> C_GT (reg,i-1L)
+    | C_EQ (r,i) when r = reg && isOdd value -> C_GT (reg,i-1L)
+    | C_EQ (r,i) when r = reg -> failwith $"Not implemented {con}"
+    | C_EQ _ -> con 
+    | C_LT (r,i) when r = reg && i <= 0L -> C_FAIL
+    | C_LT (r,i) when r = reg && i = 1L -> cApplyModi reg value (C_EQ (reg,0L))
+    | C_LT (r,i) when r = reg && i > 0L -> con
+    | C_LT (r,i) when r = reg -> failwith $"Not implemented {con}"
+    | C_LT _ -> con
+    | C_GT (r,i) when reg = r && i < 0L ->
+        let cz = cApplyModi reg value (C_ZERO r)
+        let cg = cApplyModi reg value (C_GT (r,0L))
+        C_OR [cz;cg]
+    | C_GT (r,i) when reg = r && i > 0L -> con
+    | C_GT _ -> con
+    | C_ODD r when r = reg && isEven value -> con
+    | C_ODD r when r = reg && isOdd value -> C_SUCCESS
+    | C_ODD _ -> con 
+    | C_EVEN r when r = reg && isEven value -> con
+    | C_EVEN r when r = reg && isOdd value -> C_SUCCESS
+    | C_EVEN _ -> con
+    | C_FAIL -> C_FAIL
+    | C_SUCCESS -> C_SUCCESS 
+
+let rec propagateFailSuccess (con:Constraint) =
+    match con with
+    | C_FAIL -> C_FAIL
+    | C_AND ands when ands |> List.contains C_FAIL -> C_FAIL
+    | C_AND ands ->
+        let ands = ands |> List.map propagateFailSuccess 
+        let ands = ands |> List.filter ((<>) C_SUCCESS)
+        match ands.Length with
+        | 0 -> C_SUCCESS
+        | 1 -> ands.Head
+        | _ -> C_AND ands
+    | C_OR ors when ors |> List.contains C_SUCCESS -> C_SUCCESS 
+    | C_OR ors ->
+        let ors = ors |> List.map propagateFailSuccess
+        let ors = ors |> List.filter ((<>) C_FAIL)
+        match ors.Length with 
+        | 0 -> C_FAIL 
+        | 1 -> ors.Head
+        | _ -> C_OR ors
+    | _ -> con 
+
+let purge (con:Constraint) =
+    printfn $"Purging {con}"
+    let con = propagateFailSuccess con
+    printfn $"Purged {con}"
+    con 
+    
 let checkConstraints (program:Program) : Program =
     let rec check (con:Constraint) (program:Program) =
+        let con = purge con 
         match program with
         [] -> []
         | inst :: rest ->
@@ -768,7 +881,7 @@ let checkConstraints (program:Program) : Program =
             printfn "--"
             match inst with
             | ADDR (r1,r2) ->
-                let con = cApplyAddr con r1 r2
+                let con = cApplyAddr r1 r2 con 
                 check con rest
             | ADDI (r1,i) ->
                 let con = cApplyAddi r1 i con
@@ -784,6 +897,12 @@ let checkConstraints (program:Program) : Program =
                 check con rest
             | EQLR (r1,r2) ->
                 let con = cApplyEqlr r1 r2 con
+                check con rest
+            | DIVI (r1,i) ->
+                let con = cApplyDivi r1 i con
+                check con rest
+            | MODI (r1,i) ->
+                let con = cApplyModi r1 i con
                 check con rest 
             | _ -> failwith $"Not implemented {inst}"
             
