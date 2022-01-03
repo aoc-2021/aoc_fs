@@ -133,6 +133,11 @@ let input = file |> List.map parseLine
 
 let program = input |> withInputs
 
+let isLimitedInput (value:Value) =
+    match value with
+    | INPUT (_,vals) -> vals.Count < 9
+    | _ -> false 
+
 let smallest (value: Value) =
     match value with
     | CONST i -> i
@@ -564,6 +569,7 @@ let rec consolidateLossy (value: Value) =
     | RANGE _ -> value
     | INVALID -> INVALID
 
+
 type Constraint =
     | C_ZERO of Reg
     | C_EQ of Reg * int64
@@ -653,6 +659,12 @@ let rec cApplyAddr (r1: Reg) (r2: Reg) (con: Constraint) : Constraint =
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
     | C_REQ_INPUT _ -> con
+    | C_MOD_BY (r, mv, mr) when r = r1 ->
+        let r2zero = C_AND [ C_MOD_BY(r, mv, mr); C_ZERO r2 ]
+
+        C_OR [ r2zero
+               C_LT(r2, 0L)
+               C_GT(r2, 0L) ]
     | _ -> notImpl ()
 
 let rec cApplyAddi (reg: Reg) (value: Value) (con: Constraint) : Constraint =
@@ -687,7 +699,7 @@ let rec cApplyAddi (reg: Reg) (value: Value) (con: Constraint) : Constraint =
     | C_EVEN _, _ -> con
     | C_FAIL, _ -> C_FAIL
     | C_SUCCESS, _ -> C_SUCCESS
-    | C_REQ_INPUT _,_ -> con
+    | C_REQ_INPUT _, _ -> con
     | _ -> failwith $"Not implemented:cApplyAddi {con}"
 
 let rec cApplyMulr (r1: Reg) (r2: Reg) (con: Constraint) : Constraint =
@@ -741,6 +753,7 @@ let rec cApplySeti (reg: Reg) (value: Value) (con: Constraint) =
             | INPUT (i, vals) ->
                 let input =
                     INPUT(i, vals |> Map.filter (fun _ v -> v = 0L))
+
                 C_REQ_INPUT input
             | _ -> C_SUCCESS
         else
@@ -750,7 +763,9 @@ let rec cApplySeti (reg: Reg) (value: Value) (con: Constraint) =
         if largest value > i then
             match value with
             | INPUT (index, vals) ->
-                let input = INPUT(index,vals |> Map.filter (fun _ v -> v > i))
+                let input =
+                    INPUT(index, vals |> Map.filter (fun _ v -> v > i))
+
                 C_REQ_INPUT input
             | _ -> C_SUCCESS
         else
@@ -777,6 +792,15 @@ let rec cApplySeti (reg: Reg) (value: Value) (con: Constraint) =
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
     | C_REQ_INPUT _ -> con
+    | C_MOD_BY (r,mv,mr) when r = reg ->
+        let value = modValue value mv
+        if canContain value mr then 
+            match value with
+            | CONST c -> C_SUCCESS
+            | INPUT _ -> filterValue value ((=) mr) |> C_REQ_INPUT
+            | _ -> C_SUCCESS 
+        else C_FAIL
+    | C_MOD_BY _ -> con 
     | _ -> failwith $"Not implemented: {con}"
 
 let rec cApplyEqli (reg: Reg) (value: Value) (con: Constraint) =
@@ -813,7 +837,7 @@ let rec cApplyEqli (reg: Reg) (value: Value) (con: Constraint) =
     | C_EVEN _ -> con
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
-    | C_REQ_INPUT _ -> con 
+    | C_REQ_INPUT _ -> con
     | _ -> failwith $"Not implemented {con}"
 
 let rec cApplyEqlr r1 r2 (con: Constraint) =
@@ -872,7 +896,7 @@ let rec cApplyDivi (reg: Reg) (value: int64) (con: Constraint) =
     | C_ODD _ -> con
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
-    | C_REQ_INPUT _ -> con 
+    | C_REQ_INPUT _ -> con
     | _ -> failwith $"Not implemented {con}"
 
 let rec cApplyModi (reg: Reg) (value: int64) (con: Constraint) =
@@ -967,7 +991,12 @@ let rec testRegOddEven (reg: Reg) (odd: bool) (con: Constraint) : bool =
     | C_EVEN _ -> true
     | C_FAIL -> false
     | C_SUCCESS -> true
-    | C_REQ_INPUT _ -> true 
+    | C_REQ_INPUT _ -> true
+    | C_MOD_BY (r, mv, rv) when r = reg && isEven mv && odd -> isOdd rv
+    | C_MOD_BY (r, mv, rv) when r = reg && isEven mv && even -> isEven rv
+    | C_MOD_BY (r, mv, _) when r = reg && isOdd mv -> true
+    | C_MOD_BY (r, _, _) when r <> reg -> true
+
     | _ -> failwith $"Missing {con}"
 
 let rec removeOddEven (reg: Reg) (odd: bool) (con: Constraint) : Constraint =
@@ -991,6 +1020,9 @@ let rec removeOddEven (reg: Reg) (odd: bool) (con: Constraint) : Constraint =
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
     | C_REQ_INPUT _ -> con
+    | C_MOD_BY (r, mv, mr) when r = reg && isEven mr && isOdd mr = odd -> C_FAIL
+    | C_MOD_BY (r, mv, mr) when r = reg -> con
+    | C_MOD_BY (r, _, _) -> con
     | _ -> failwith $"Missing {con}"
 
 let testRegOddEvenBoth (r: Reg) (con: Constraint) =
@@ -1054,7 +1086,11 @@ let rec testZero (reg: Reg) (con: Constraint) =
     | C_EVEN _ -> true
     | C_FAIL -> false
     | C_SUCCESS -> true
-    | C_REQ_INPUT _ -> true 
+    | C_REQ_INPUT _ -> true
+    | C_MOD_BY (r, _, 0L) when r = reg -> true
+    | C_MOD_BY (r, _, _) when r = reg -> false
+    | C_MOD_BY _ -> true
+    | _ -> failwith $"Missing {con}"
 
 let rec testNotZero (reg: Reg) (con: Constraint) =
     match con with
@@ -1078,6 +1114,8 @@ let rec testNotZero (reg: Reg) (con: Constraint) =
     | C_FAIL -> false
     | C_SUCCESS -> true
     | C_REQ_INPUT _ -> true
+    | C_MOD_BY _ -> true
+    | _ -> failwith $"Missing {con}"
 
 let rec enforceNotZero (reg: Reg) (con: Constraint) =
     match con with
@@ -1095,7 +1133,7 @@ let rec enforceNotZero (reg: Reg) (con: Constraint) =
     | C_ODD _ -> con
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
-    | C_REQ_INPUT _ -> con 
+    | C_REQ_INPUT _ -> con
 
 let rec enforceZero (reg: Reg) (con: Constraint) =
     match con with
@@ -1200,7 +1238,14 @@ let rec flatten (con: Constraint) =
         else
             C_OR ors
     | _ -> con
-
+    
+let rec removeIneffectiveInputReqs (con:Constraint) =
+    match con with
+    | C_AND ands -> ands |> List.map removeIneffectiveInputReqs |> C_AND 
+    | C_OR ors -> ors |> List.map removeIneffectiveInputReqs |> C_OR
+    | C_REQ_INPUT value -> if isLimitedInput value then con else C_SUCCESS
+    | _ -> con 
+ 
 let purge (con: Constraint) =
     // printfn $"Purging {con}"
     let con = con |> propagateFailSuccess
@@ -1209,6 +1254,7 @@ let purge (con: Constraint) =
     // printfn $"Purged 2 {con}"
     let con = checkZeroes con
     let con = testNotZeroes con
+    let con = removeIneffectiveInputReqs con 
     // let con = flatten con
     // printfn $"Flatten {flatten con}"
     con
@@ -1299,3 +1345,21 @@ let checkConstraints (program: Program) : Program =
 let program4 = checkConstraints program3
 
 printProgram program4
+
+// ok, this was useless yet again - lets do a new backwards search
+
+
+let tryExecReverse (program: Program) =
+    let rec eval (alu: Map<Reg, int64>) (program: Program) =
+        match program with
+        | [] -> []
+        | inst :: rest ->
+            printf "Executing: "
+            printInstruction
+            printALU
+            eval alu rest
+
+    let endState = [ (Z, 0L) ] |> Map
+    program |> List.rev |> (eval endState)
+
+// tryExecReverse program4
