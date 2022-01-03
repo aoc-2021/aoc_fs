@@ -85,7 +85,7 @@ let v2s (value: Value) =
         |> Set.toList
         |> List.map string
         |> String.concat " "
-        |> sprintf "{ %A }"
+        |> sprintf "{ %s }"
     | RANGE (a, b) -> $"[{a} .. {b} ]"
     | INVALID -> "INVALID"
 
@@ -105,11 +105,12 @@ let printInstruction (inst: Inst) =
     |> printfn "%s"
 
 let printALU (alu: ALU) =
+    let que = "?"
     printf "ALU:"
-    printf $"  W: {alu.TryFind W |> Option.get |> v2s}"
-    printf $"  X: {alu.TryFind X |> Option.get |> v2s}"
-    printf $"  Y: {alu.TryFind Y |> Option.get |> v2s}"
-    printfn $"  Z: {alu.TryFind Z |> Option.get |> v2s}"
+    printf $"  W: {alu.TryFind W |> Option.map v2s  |> Option.defaultValue que}"
+    printf $"  X: {alu.TryFind X |> Option.map v2s  |> Option.defaultValue que}"
+    printf $"  Y: {alu.TryFind Y |> Option.map v2s  |> Option.defaultValue que}"
+    printfn $"  Z: {alu.TryFind Z |> Option.map v2s |> Option.defaultValue que}"
 
 let printProgram (program: Program) =
     program |> List.map printInstruction |> ignore
@@ -1433,14 +1434,37 @@ let rec intersectWith (v1: Value) (v2: Value) : Value =
     | MULTIPLE s, _ -> s |> Set.filter (canContain v2) |> MULTIPLE
     | _ -> failwith $"Not implemented {v1} {v2}"
 
+let intersectALUWith (alu1:ALU) (alu2:ALU) : ALU =
+    let intersectReg (r:Reg) =
+        let maybeV1 = alu1.TryFind r
+        let maybeV2 = alu2.TryFind r 
+        match maybeV1, maybeV2 with
+        | None,None -> None
+        | _,None -> maybeV1
+        | None,_ -> maybeV2
+        | Some(v1),Some(v2) -> intersectWith v1 v2 |> Some
+    let regs = [W;X;Y;Z]
+    let alu =
+        regs |> List.map (fun r -> r,intersectReg r)
+        |> List.filter (snd >> Option.isSome)
+        |> List.map (fun (a,Some(b)) -> (a,b))
+        |> Map
+    printfn $"IntersecALUWith: "
+    printALU alu1
+    printALU alu2
+    printfn "===>"
+    printALU alu
+    printfn "---"
+    alu 
+
 let propagateALUBack (program: ALUProgram) =
     let rec eval (alu: ALU) (program: ALUProgram) =
         let known = alu.ContainsKey
         let get = alu.TryFind >> Option.get
-
         match program with
         | [] -> []
-        | (alu, inst) :: rest ->
+        | (instALU, inst) :: rest ->
+            let alu = intersectALUWith instALU alu  
             printf "Executing: "
             printInstruction inst
             printALU
@@ -1453,4 +1477,4 @@ let propagateALUBack (program: ALUProgram) =
     let endState: ALU = [ (Z, CONST 0L) ] |> Map
     program |> List.rev |> (eval endState)
 
-// tryExecReverse program4
+propagateALUBack revProgram 
