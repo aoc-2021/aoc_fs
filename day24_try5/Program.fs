@@ -1349,17 +1349,71 @@ printProgram program4
 // ok, this was useless yet again - lets do a new backwards search
 
 
-let tryExecReverse (program: Program) =
-    let rec eval (alu: Map<Reg, int64>) (program: Program) =
+type ALUProgram = list<ALU*Inst> 
+
+let toALUProgram (program:Program) : ALUProgram =
+    let rec eval (alu:ALU) (program:Program) : ALUProgram =
+        let get = alu.TryFind >> Option.get 
         match program with
         | [] -> []
-        | inst :: rest ->
+        | inst::rest ->
+            match inst with
+            | ADDI (r1,i) ->
+                let alu = alu.Add(r1,addValue (get r1) i)
+                (alu,inst) :: (eval alu rest)
+            | ADDR (r1,r2) ->
+                let alu = alu.Add(r1,addValue (get r1) (get r2))
+                (alu,inst) :: (eval alu rest)
+            | MULI (r1,i) ->
+                let alu = alu.Add(r1,mulValue (get r1) i)
+                (alu,inst) :: (eval alu rest)
+            | MULR (r1,r2) ->
+                let alu = alu.Add(r1,mulValue (get r1) (get r2))
+                (alu,inst) :: (eval alu rest)
+            | DIVI (r1,i) ->
+                let alu = alu.Add(r1,divValue (get r1) i)
+                (alu,inst) :: (eval alu rest)
+            | MODI (r1,i) ->
+                let alu = alu.Add(r1,modValue (get r1) i)
+                (alu,inst) :: (eval alu rest)
+            | EQLI (r1,i) ->
+                let alu = alu.Add(r1,eqValue (get r1) i)
+                (alu,inst) :: (eval alu rest)
+            | EQLR (r1,r2) ->
+                let alu = alu.Add(r1,eqValue (get r1) (get r2))
+                (alu,inst) :: (eval alu rest)
+            | SETI (r1,i) ->
+                let alu = alu.Add(r1,i)
+                (alu,inst) :: (eval alu rest)
+            | SETR (r1,r2) ->
+                let alu = alu.Add (r1,get r2)
+                (alu,inst) :: (eval alu rest)
+            | _ -> failwith $"Missing case: {inst}"
+    let initALU = fillALU (CONST 0L)
+    eval initALU program
+        
+let revProgram = program |> toALUProgram
+revProgram |> List.map (printfn "%A")
+
+
+
+
+
+let propagateALUBack (program: ALUProgram) =
+    let rec eval (alu: ALU) (program: ALUProgram) =
+        let known = alu.ContainsKey
+        let get = alu.TryFind >> Option.get 
+        match program with
+        | [] -> []
+        | (alu,inst) :: rest ->
             printf "Executing: "
-            printInstruction
+            printInstruction inst
             printALU
+            match inst with
+            | _ -> failwith $"not implemented: {inst}"
             eval alu rest
 
-    let endState = [ (Z, 0L) ] |> Map
+    let endState : ALU = [ (Z, CONST 0L) ] |> Map
     program |> List.rev |> (eval endState)
 
 // tryExecReverse program4
