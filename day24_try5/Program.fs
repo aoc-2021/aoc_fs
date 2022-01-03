@@ -133,10 +133,10 @@ let input = file |> List.map parseLine
 
 let program = input |> withInputs
 
-let isLimitedInput (value:Value) =
+let isLimitedInput (value: Value) =
     match value with
-    | INPUT (_,vals) -> vals.Count < 9
-    | _ -> false 
+    | INPUT (_, vals) -> vals.Count < 9
+    | _ -> false
 
 let smallest (value: Value) =
     match value with
@@ -792,15 +792,17 @@ let rec cApplySeti (reg: Reg) (value: Value) (con: Constraint) =
     | C_FAIL -> C_FAIL
     | C_SUCCESS -> C_SUCCESS
     | C_REQ_INPUT _ -> con
-    | C_MOD_BY (r,mv,mr) when r = reg ->
+    | C_MOD_BY (r, mv, mr) when r = reg ->
         let value = modValue value mv
-        if canContain value mr then 
+
+        if canContain value mr then
             match value with
             | CONST c -> C_SUCCESS
             | INPUT _ -> filterValue value ((=) mr) |> C_REQ_INPUT
-            | _ -> C_SUCCESS 
-        else C_FAIL
-    | C_MOD_BY _ -> con 
+            | _ -> C_SUCCESS
+        else
+            C_FAIL
+    | C_MOD_BY _ -> con
     | _ -> failwith $"Not implemented: {con}"
 
 let rec cApplyEqli (reg: Reg) (value: Value) (con: Constraint) =
@@ -1238,14 +1240,21 @@ let rec flatten (con: Constraint) =
         else
             C_OR ors
     | _ -> con
-    
-let rec removeIneffectiveInputReqs (con:Constraint) =
+
+let rec removeIneffectiveInputReqs (con: Constraint) =
     match con with
-    | C_AND ands -> ands |> List.map removeIneffectiveInputReqs |> C_AND 
+    | C_AND ands ->
+        ands
+        |> List.map removeIneffectiveInputReqs
+        |> C_AND
     | C_OR ors -> ors |> List.map removeIneffectiveInputReqs |> C_OR
-    | C_REQ_INPUT value -> if isLimitedInput value then con else C_SUCCESS
-    | _ -> con 
- 
+    | C_REQ_INPUT value ->
+        if isLimitedInput value then
+            con
+        else
+            C_SUCCESS
+    | _ -> con
+
 let purge (con: Constraint) =
     // printfn $"Purging {con}"
     let con = con |> propagateFailSuccess
@@ -1254,7 +1263,7 @@ let purge (con: Constraint) =
     // printfn $"Purged 2 {con}"
     let con = checkZeroes con
     let con = testNotZeroes con
-    let con = removeIneffectiveInputReqs con 
+    let con = removeIneffectiveInputReqs con
     // let con = flatten con
     // printfn $"Flatten {flatten con}"
     con
@@ -1349,71 +1358,99 @@ printProgram program4
 // ok, this was useless yet again - lets do a new backwards search
 
 
-type ALUProgram = list<ALU*Inst> 
+type ALUProgram = list<ALU * Inst>
 
-let toALUProgram (program:Program) : ALUProgram =
-    let rec eval (alu:ALU) (program:Program) : ALUProgram =
-        let get = alu.TryFind >> Option.get 
+let toALUProgram (program: Program) : ALUProgram =
+    let rec eval (alu: ALU) (program: Program) : ALUProgram =
+        let get = alu.TryFind >> Option.get
+
         match program with
         | [] -> []
-        | inst::rest ->
+        | inst :: rest ->
             match inst with
-            | ADDI (r1,i) ->
-                let alu = alu.Add(r1,addValue (get r1) i)
-                (alu,inst) :: (eval alu rest)
-            | ADDR (r1,r2) ->
-                let alu = alu.Add(r1,addValue (get r1) (get r2))
-                (alu,inst) :: (eval alu rest)
-            | MULI (r1,i) ->
-                let alu = alu.Add(r1,mulValue (get r1) i)
-                (alu,inst) :: (eval alu rest)
-            | MULR (r1,r2) ->
-                let alu = alu.Add(r1,mulValue (get r1) (get r2))
-                (alu,inst) :: (eval alu rest)
-            | DIVI (r1,i) ->
-                let alu = alu.Add(r1,divValue (get r1) i)
-                (alu,inst) :: (eval alu rest)
-            | MODI (r1,i) ->
-                let alu = alu.Add(r1,modValue (get r1) i)
-                (alu,inst) :: (eval alu rest)
-            | EQLI (r1,i) ->
-                let alu = alu.Add(r1,eqValue (get r1) i)
-                (alu,inst) :: (eval alu rest)
-            | EQLR (r1,r2) ->
-                let alu = alu.Add(r1,eqValue (get r1) (get r2))
-                (alu,inst) :: (eval alu rest)
-            | SETI (r1,i) ->
-                let alu = alu.Add(r1,i)
-                (alu,inst) :: (eval alu rest)
-            | SETR (r1,r2) ->
-                let alu = alu.Add (r1,get r2)
-                (alu,inst) :: (eval alu rest)
+            | ADDI (r1, i) ->
+                let alu = alu.Add(r1, addValue (get r1) i)
+                (alu, inst) :: (eval alu rest)
+            | ADDR (r1, r2) ->
+                let alu = alu.Add(r1, addValue (get r1) (get r2))
+                (alu, inst) :: (eval alu rest)
+            | MULI (r1, i) ->
+                let alu = alu.Add(r1, mulValue (get r1) i)
+                (alu, inst) :: (eval alu rest)
+            | MULR (r1, r2) ->
+                let alu = alu.Add(r1, mulValue (get r1) (get r2))
+                (alu, inst) :: (eval alu rest)
+            | DIVI (r1, i) ->
+                let alu = alu.Add(r1, divValue (get r1) i)
+                (alu, inst) :: (eval alu rest)
+            | MODI (r1, i) ->
+                let alu = alu.Add(r1, modValue (get r1) i)
+                (alu, inst) :: (eval alu rest)
+            | EQLI (r1, i) ->
+                let alu = alu.Add(r1, eqValue (get r1) i)
+                (alu, inst) :: (eval alu rest)
+            | EQLR (r1, r2) ->
+                let alu = alu.Add(r1, eqValue (get r1) (get r2))
+                (alu, inst) :: (eval alu rest)
+            | SETI (r1, i) ->
+                let alu = alu.Add(r1, i)
+                (alu, inst) :: (eval alu rest)
+            | SETR (r1, r2) ->
+                let alu = alu.Add(r1, get r2)
+                (alu, inst) :: (eval alu rest)
             | _ -> failwith $"Missing case: {inst}"
+
     let initALU = fillALU (CONST 0L)
     eval initALU program
-        
+
 let revProgram = program |> toALUProgram
 revProgram |> List.map (printfn "%A")
 
 
+let rec intersectWith (v1: Value) (v2: Value) : Value =
+    match v1, v2 with
+    | INVALID, _ -> INVALID
+    | _, INVALID -> INVALID
+    | CONST c1, CONST c2 when c1 = c2 -> CONST c1
+    | CONST c1, CONST c2 -> INVALID
+    | CONST c, v2 when canContain v2 c -> CONST c
+    | CONST c, _ -> INVALID
+    | INPUT (id, vals), _ ->
+        let vals =
+            vals |> Map.filter (fun v i -> canContain v2 i)
 
+        INPUT(id, vals)
+    | _, INPUT _ -> intersectWith v2 v1 // flips, but keeps the INPUT
+    | RANGE _, CONST c2 when canContain v1 c2 -> CONST c2
+    | RANGE (min1, max1), RANGE (min2, max2) ->
+        let newMin = max min1 min2
+        let newMax = min max1 max2
 
+        if newMin > newMax then INVALID
+        elif newMin = newMax then CONST newMin
+        else RANGE(newMin, newMax)
+    | RANGE _, MULTIPLE _ -> intersectWith v2 v1
+    | MULTIPLE s, _ -> s |> Set.filter (canContain v2) |> MULTIPLE
+    | _ -> failwith $"Not implemented {v1} {v2}"
 
 let propagateALUBack (program: ALUProgram) =
     let rec eval (alu: ALU) (program: ALUProgram) =
         let known = alu.ContainsKey
-        let get = alu.TryFind >> Option.get 
+        let get = alu.TryFind >> Option.get
+
         match program with
         | [] -> []
-        | (alu,inst) :: rest ->
+        | (alu, inst) :: rest ->
             printf "Executing: "
             printInstruction inst
             printALU
+
             match inst with
             | _ -> failwith $"not implemented: {inst}"
+
             eval alu rest
 
-    let endState : ALU = [ (Z, CONST 0L) ] |> Map
+    let endState: ALU = [ (Z, CONST 0L) ] |> Map
     program |> List.rev |> (eval endState)
 
 // tryExecReverse program4
