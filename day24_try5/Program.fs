@@ -107,10 +107,26 @@ let printInstruction (inst: Inst) =
 let printALU (alu: ALU) =
     let que = "?"
     printf "ALU:"
-    printf $"  W: {alu.TryFind W |> Option.map v2s  |> Option.defaultValue que}"
-    printf $"  X: {alu.TryFind X |> Option.map v2s  |> Option.defaultValue que}"
-    printf $"  Y: {alu.TryFind Y |> Option.map v2s  |> Option.defaultValue que}"
-    printfn $"  Z: {alu.TryFind Z |> Option.map v2s |> Option.defaultValue que}"
+
+    printf
+        $"  W: {alu.TryFind W
+                |> Option.map v2s
+                |> Option.defaultValue que}"
+
+    printf
+        $"  X: {alu.TryFind X
+                |> Option.map v2s
+                |> Option.defaultValue que}"
+
+    printf
+        $"  Y: {alu.TryFind Y
+                |> Option.map v2s
+                |> Option.defaultValue que}"
+
+    printfn
+        $"  Z: {alu.TryFind Z
+                |> Option.map v2s
+                |> Option.defaultValue que}"
 
 let printProgram (program: Program) =
     program |> List.map printInstruction |> ignore
@@ -1434,47 +1450,160 @@ let rec intersectWith (v1: Value) (v2: Value) : Value =
     | MULTIPLE s, _ -> s |> Set.filter (canContain v2) |> MULTIPLE
     | _ -> failwith $"Not implemented {v1} {v2}"
 
-let intersectALUWith (alu1:ALU) (alu2:ALU) : ALU =
-    let intersectReg (r:Reg) =
+let intersectALUWith (alu1: ALU) (alu2: ALU) : ALU =
+    let intersectReg (r: Reg) =
         let maybeV1 = alu1.TryFind r
-        let maybeV2 = alu2.TryFind r 
+        let maybeV2 = alu2.TryFind r
+
         match maybeV1, maybeV2 with
-        | None,None -> None
-        | _,None -> maybeV1
-        | None,_ -> maybeV2
-        | Some(v1),Some(v2) -> intersectWith v1 v2 |> Some
-    let regs = [W;X;Y;Z]
+        | None, None -> None
+        | _, None -> maybeV1
+        | None, _ -> maybeV2
+        | Some (v1), Some (v2) -> intersectWith v1 v2 |> Some
+
+    let regs = [ W; X; Y; Z ]
+
     let alu =
-        regs |> List.map (fun r -> r,intersectReg r)
+        regs
+        |> List.map (fun r -> r, intersectReg r)
         |> List.filter (snd >> Option.isSome)
-        |> List.map (fun (a,Some(b)) -> (a,b))
+        |> List.map (fun (a, Some (b)) -> (a, b))
         |> Map
+
     printfn $"IntersecALUWith: "
     printALU alu1
     printALU alu2
     printfn "===>"
     printALU alu
     printfn "---"
-    alu 
+    alu
 
-let propagateALUBack (program: ALUProgram) =
-    let rec eval (alu: ALU) (program: ALUProgram) =
-        let known = alu.ContainsKey
-        let get = alu.TryFind >> Option.get
+let sizeOf (v:Value) : int64 = 
+    match v with
+    | CONST _ -> 1L
+    | INPUT (_,vals) -> vals.Count |> int64
+    | MULTIPLE s -> s.Count |> int64 
+    | RANGE (r1,r2) -> r2-r1 + 1L 
+
+let expand (v:Value) : Value =
+    match v with
+    | RANGE (min,max) -> {min..max} |> Set |> MULTIPLE
+    | _ -> v 
+
+let rec filterDivisibleByAssumeValid (v1:Value) (v2:Value) : Value*Value =
+    let bothZero = (canContain v1 0L) && (canContain v2 0L)
+    match v1,v2 with
+    | CONST 0L, _ -> v1,v2 
+    | CONST _,CONST _ -> v1,v2
+    | INPUT (i,vals), CONST c ->
+        let vals = vals |> Map.filter (fun _ v -> v % c = 0L)
+        INPUT (i,vals), CONST c
+    | INPUT (i1,vals1), INPUT (i2,vals2) when smallest v1 > 0L && smallest v2 > 0L ->
+        let vals1 = vals1 |> Map.filter (fun _ v1 -> vals2 |> Map.exists (fun _ v2 -> v1 % v2 = 0L)) 
+        let vals2 = vals2 |> Map.filter (fun _ v2 -> vals1 |> Map.exists (fun _ v1 -> v1 % v2 = 0L))
+        INPUT (i1,vals1),INPUT (i2,vals2)
+    | RANGE _,_ when sizeOf v1 < 30 -> filterDivisibleByAssumeValid (expand v1) v2
+    | _,RANGE _ when sizeOf v2 < 30 -> filterDivisibleByAssumeValid v1 (expand v2)
+    | MULTIPLE s1, MULTIPLE s2 ->
+        let s2 = s2.Remove(0L) 
+        let ss = Seq.allPairs (s1 |> Set.toSeq) (s2 |> Set.toSeq)
+                 |> Seq.filter (fun (a,b) -> a % b = 0L)
+                 |> Seq.toList
+        let ss = if bothZero then (0L,0L)::ss else ss 
+        let v1 = ss |> List.map fst |> Set |> MULTIPLE 
+        let v2 = ss |> List.map snd |> Set |> MULTIPLE 
+        v1,v2 
+    | _ -> failwith $"Not implemented: {v1 |> v2s} {v2 |> v2s}"
+
+let rec revMult (v1:Value) (v2:Value) : Option<Value> =
+    match v1,v2 with
+    | _,_ when canContain v1 0L && canContain v2 0L -> None
+    | CONST 0L,_ -> None 
+    | _, CONST 0L -> Some(INVALID)
+    | CONST c1,CONST c2 -> if (c1 % c2) = 0L then CONST (c1/c2) |> Some else Some(INVALID)
+    | MULTIPLE s, CONST c ->
+        let s = s |> Set.filter (fun i -> i % c = 0L)
+        let s = s |> Set.map (fun i -> i / c)
+        MULTIPLE s |> Some
+    | MULTIPLE s1, MULTIPLE s2 ->
+        let s2 = s2.Remove(0L)
+        let s1 = s1 |> Set.toSeq
+        let s2 = s2 |> Set.toSeq
+        let s = Seq.allPairs s1 s2
+                |> Seq.filter (fun (a,b) -> a % b = 0L)
+                |> Seq.map (fun (a,b) -> (a/b))
+                |> Set
+        if s.IsEmpty then Some(INVALID)
+        else MULTIPLE s |> Some 
+    | RANGE _,_ when sizeOf v1 < 30 -> revMult (expand v1) v2
+    | _,RANGE _ when sizeOf v2 < 30 -> revMult v1 (expand v2)
+    
+    | _ -> failwith $"Not implemented {v1} {v2}"
+        
+let propagateALUBack (program: ALUProgram) : ALUProgram =
+    let rec eval (alu: ALU) (program: ALUProgram) : ALUProgram =
         match program with
         | [] -> []
         | (instALU, inst) :: rest ->
-            let alu = intersectALUWith instALU alu  
+            let alu = intersectALUWith instALU alu
+            let get = alu.TryFind >> Option.get
+            let known = alu.ContainsKey
             printf "Executing: "
             printInstruction inst
             printALU
-
             match inst with
+            | ADDI (r1, CONST i) ->
+                if known r1 then
+                    let v1 = get r1
+                    let v1 = addValue v1 (CONST -i)
+                    let newInst = alu,inst 
+                    let alu = alu.Add(r1,v1)
+                    newInst::(eval alu rest)
+                else
+                    (alu,inst) :: (eval alu rest)
+            | ADDR (r1, r2) ->
+                let v1 = get r1
+                let v2 = get r2 |> mulValue (CONST -1)
+                let v1 = addValue v1 v2
+                printfn $"ADDR: Setting {r1} to {v1}"
+                let newInst = alu, inst
+                let alu = alu.Add(r1, v1)
+                newInst :: (eval alu rest)
+            | MULI (r1,v2) when v2 = CONST 0L ->
+                let newInst = alu,inst
+                let alu = alu.Remove r1
+                newInst :: (eval alu rest)
+            | MULR (r1,r2) ->
+                let v1 = get r1
+                let v2 = get r2
+                let v1,v2 = filterDivisibleByAssumeValid v1 v2
+                let alu = alu.Add(r1,v1).Add(r2,v2)
+                let newInst = alu,inst
+                printfn $"before: {v1}"
+                let o1 = revMult v1 v2
+                printfn $"after: {o1}"
+                let alu = 
+                    if o1.IsSome then alu.Add (r1,o1 |> Option.get)
+                    else alu.Remove(r1)
+                newInst :: (eval alu rest)
+            | EQLI (r1, CONST 0L) when known r1 ->
+                let v1 = get r1
+                match canContain v1 0L, canContain v1 1L with
+                | true,true ->
+                    let alu = alu.Add (r1,[0;1]|>Set|>MULTIPLE)
+                    let newInst = alu,inst
+                    let alu = alu.Remove(r1)
+                    newInst : (eval alu rest)
+                | false, true -> _ // TODO: contineu here 
+                | true,false -> _ 
+                | _ -> failwith $"Inconsistent state: {r1} {v1}"
+            | EQLI (r1, CONST 0L) when not (known r1) ->
+                let newInst = alu,inst
+                let alu = alu.Remove(r1)
+                newInst :: (eval alu rest)
             | _ -> failwith $"not implemented: {inst}"
-
-            eval alu rest
 
     let endState: ALU = [ (Z, CONST 0L) ] |> Map
     program |> List.rev |> (eval endState)
 
-propagateALUBack revProgram 
+propagateALUBack revProgram
