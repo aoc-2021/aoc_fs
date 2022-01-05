@@ -1547,6 +1547,7 @@ let rec filterDivisibleByAssumeValid (v1: Value) (v2: Value) : Value * Value =
 let rec revMult (v1: Value) (v2: Value) : Option<Value> =
     match v1, v2 with
     | _, _ when canContain v1 0L && canContain v2 0L -> None
+    | _, CONST 1L -> Some(v1) 
     | CONST 0L, _ -> None
     | _, CONST 0L -> Some(INVALID)
     | CONST c1, CONST c2 ->
@@ -1583,9 +1584,6 @@ let rec revMult (v1: Value) (v2: Value) : Option<Value> =
     | RANGE (min,max), MULTIPLE s2 when min >= 0L && smallest v2 >= 0L ->
         if s2 |> Set.filter (fun i -> min % i = 0L) |> Set.isEmpty |> not then Some(v1)
         else revMult (RANGE(min+1L,max)) v2 
-
-    
-    
     | _ -> failwith $"Not implemented {v1} {v2}"
 
 let revModI (value: Value) (i: int64) =
@@ -1715,6 +1713,48 @@ let propagateALUBack (program: ALUProgram) : ALUProgram =
             | _ -> failwith $"not implemented: {inst}"
 
     let endState: ALU = [ (Z, CONST 0L) ] |> Map
-    program |> List.rev |> (eval endState)
+    program |> List.rev |> (eval endState) |> List.rev 
 
-propagateALUBack revProgram
+let program5: ALUProgram = propagateALUBack revProgram
+
+let printALUProgram (program: ALUProgram) =
+    program |> List.map (fun (alu,inst) -> printInstruction inst; printfn "->" ; printALU alu)
+
+printALUProgram program5
+
+let testOper (oper:int64*int64->int64) (value1:Value) (value2:Value) (result:Value) : Value*Value =
+    match value1, value2 with
+    | CONST c1, CONST c2 -> (value1,value2)
+    | CONST c1, INPUT (id,vals) ->
+        let valid2 = vals |> Map.toList
+                          |> List.map snd
+                          |> List.filter (fun i2 -> oper (c1,i2) |> (canContain result))
+                          |> Set 
+        let value2 = INPUT (id,vals |> Map.filter (fun _ v -> valid2.Contains v))
+        value1,value2
+    | _ -> failwith $"Not implemented: {oper} {value1} {value2} -> {result}"
+
+let rec filterOnCalculatedResults (program:ALUProgram) =
+    let rec eval (program:ALUProgram) : ALUProgram =
+        match program with
+        | (outputALU,inst)::(inputALU,prevInst)::rest ->
+            printf "Going from :"
+            printALU inputALU
+            printf "applying instruction: "
+            printInstruction inst
+            printf "to: "
+            printALU outputALU
+            match inst with
+            | ADDR (r1,r2) ->
+                let plus (a,b) = a+b 
+                let result = outputALU.TryFind (r1) |> Option.get
+                let v1 = inputALU.TryFind (r1) |> Option.get
+                let v2 = inputALU.TryFind (r2) |> Option.get
+                let v1,v2 = testOper plus v1 v2 result 
+                let inputALU = inputALU.Add(r1,v1).Add(r2,v2)
+                (outputALU,inst)::(eval ((inputALU,prevInst)::rest))
+                
+            | _ -> failwith $"Not implemented: {inst}"
+    program |> List.rev |> eval |> List.rev 
+
+filterOnCalculatedResults program5  
