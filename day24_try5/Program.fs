@@ -1722,9 +1722,10 @@ let printALUProgram (program: ALUProgram) =
 
 printALUProgram program5
 
-let testOper (oper:int64*int64->int64) (value1:Value) (value2:Value) (result:Value) : Value*Value =
+let rec testOper (oper:int64*int64->int64) (value1:Value) (value2:Value) (result:Value) : Value*Value =
+    printfn $"testOper {value1} X {value2} -> {result} "
     match value1, value2 with
-    | CONST c1, CONST c2 -> (value1,value2)
+    | CONST _, CONST _ -> (value1,value2)
     | CONST c1, INPUT (id,vals) ->
         let valid2 = vals |> Map.toList
                           |> List.map snd
@@ -1732,6 +1733,34 @@ let testOper (oper:int64*int64->int64) (value1:Value) (value2:Value) (result:Val
                           |> Set 
         let value2 = INPUT (id,vals |> Map.filter (fun _ v -> valid2.Contains v))
         value1,value2
+    | CONST c1, MULTIPLE m2 ->
+        let value2 = m2 |> Set.filter (fun v2 -> oper (c1,v2) |> (canContain result)) |> MULTIPLE
+        printfn $"testOper:<- {value1} {value2}"
+        value1,value2
+    | MULTIPLE m1, CONST c2 -> 
+        let pairs = m1 |> Set.toList |> List.map (fun v1 -> v1,c2)
+        let valid1 = pairs |> List.map fst |> Set 
+        let value1 = m1 |> Set.filter (valid1.Contains) |> MULTIPLE
+        printfn $"testOper:<- {value1} {value2}"
+        value1,value2 
+    | MULTIPLE m1, MULTIPLE m2 ->
+        let pairs =
+            List.allPairs (m1 |> Set.toList) (m2 |> Set.toList)
+            |> List.filter (oper >> (canContain result))
+        let valid1 = pairs |> List.map fst |> Set 
+        let valid2 = pairs |> List.map snd |> Set
+        let value1 = m1 |> Set.filter (valid1.Contains) |> MULTIPLE
+        let value2 = m2 |> Set.filter (valid2.Contains) |> MULTIPLE
+        printfn $"testOper:<- {value1} {value2}"
+        value1,value2
+    | RANGE _,_ when sizeOf value1 < 30 ->
+        testOper oper (expand value1) value2 result
+    | v1,v2 when result = CONST 0L && (canContain v1 0L) && (canContain v2 0L) ->
+        v1,v2
+    | v1,v2 when result = CONST 0L && (canContain v1 0L) ->
+        (CONST 0L),v2
+    | v1,v2 when result = CONST 0L && (canContain v2 0L) ->
+        v1,(CONST 0L)
     | _ -> failwith $"Not implemented: {oper} {value1} {value2} -> {result}"
 
 let rec filterOnCalculatedResults (program:ALUProgram) =
@@ -1745,6 +1774,13 @@ let rec filterOnCalculatedResults (program:ALUProgram) =
             printf "to: "
             printALU outputALU
             match inst with
+            | ADDI (r1,v2) -> 
+                let plus (a,b) = a+b 
+                let result = outputALU.TryFind (r1) |> Option.get
+                let v1 = inputALU.TryFind (r1) |> Option.get
+                let v1,v2 = testOper plus v1 v2 result 
+                let inputALU = inputALU.Add(r1,v1)
+                (outputALU,ADDI(r1,v2))::(eval ((inputALU,prevInst)::rest))
             | ADDR (r1,r2) ->
                 let plus (a,b) = a+b 
                 let result = outputALU.TryFind (r1) |> Option.get
@@ -1753,7 +1789,21 @@ let rec filterOnCalculatedResults (program:ALUProgram) =
                 let v1,v2 = testOper plus v1 v2 result 
                 let inputALU = inputALU.Add(r1,v1).Add(r2,v2)
                 (outputALU,inst)::(eval ((inputALU,prevInst)::rest))
-                
+            | MULI (r1,v2) -> 
+                let mult (a,b) = a*b 
+                let result = outputALU.TryFind (r1) |> Option.get
+                let v1 = inputALU.TryFind (r1) |> Option.get
+                let v1,v2 = testOper mult v1 v2 result 
+                let inputALU = inputALU.Add(r1,v1)
+                (outputALU,MULI(r1,v2))::(eval ((inputALU,prevInst)::rest))
+             | MULR (r1,r2) ->
+                let mult (a,b) = a*b 
+                let result = outputALU.TryFind (r1) |> Option.get
+                let v1 = inputALU.TryFind (r1) |> Option.get
+                let v2 = inputALU.TryFind (r2) |> Option.get
+                let v1,v2 = testOper mult v1 v2 result 
+                let inputALU = inputALU.Add(r1,v1).Add(r2,v2)
+                (outputALU,inst)::(eval ((inputALU,prevInst)::rest))
             | _ -> failwith $"Not implemented: {inst}"
     program |> List.rev |> eval |> List.rev 
 
