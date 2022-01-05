@@ -1,3 +1,4 @@
+open System
 open System.IO
 
 let file =
@@ -15,6 +16,13 @@ type Value =
     | MULTIPLE of Set<int64>
     | RANGE of int64 * int64
     | INVALID
+
+let _0_or_1 = [ 0L; 1L ] |> Set |> MULTIPLE
+let _1 = CONST 1L
+let _0 = CONST 0L
+let ANY_POSITIVE_NZ = RANGE(1, Int64.MaxValue / 1000L)
+let ANY_POSITIVE = RANGE(0, Int64.MaxValue / 1000L)
+let ANY_NEGATIVE = RANGE(Int64.MinValue / 1000L, -1L)
 
 type Inst =
     | INP of Reg
@@ -235,7 +243,7 @@ let modValue (value: Value) (v2: int64) =
     | INPUT (i, vals) -> INPUT(i, vals |> Map.map (fun _ value -> value % v2))
     | MULTIPLE m -> m |> Set.map (fun v -> v % v2) |> MULTIPLE
     | RANGE (_, max) when max < v2 -> value
-    | RANGE _ -> RANGE(0, v2)
+    | RANGE _ -> RANGE(0, v2 - 1L)
     | INVALID -> INVALID
 
 let rec eqValue (v1: Value) (v2: Value) =
@@ -1306,6 +1314,7 @@ let rec testValue (reg: Reg) (value: int64) (con: Constraint) =
     | C_FAIL -> false
     | _ -> true
 
+
 let filterInput (reg: Reg) (input: Value) (con: Constraint) =
     printfn $"FILTERING {reg} {input |> v2s} for {con}"
 
@@ -1478,49 +1487,73 @@ let intersectALUWith (alu1: ALU) (alu2: ALU) : ALU =
     printfn "---"
     alu
 
-let sizeOf (v:Value) : int64 = 
+let sizeOf (v: Value) : int64 =
     match v with
     | CONST _ -> 1L
-    | INPUT (_,vals) -> vals.Count |> int64
-    | MULTIPLE s -> s.Count |> int64 
-    | RANGE (r1,r2) -> r2-r1 + 1L 
+    | INPUT (_, vals) -> vals.Count |> int64
+    | MULTIPLE s -> s.Count |> int64
+    | RANGE (r1, r2) -> r2 - r1 + 1L
 
-let expand (v:Value) : Value =
+let expand (v: Value) : Value =
     match v with
-    | RANGE (min,max) -> {min..max} |> Set |> MULTIPLE
-    | _ -> v 
+    | RANGE (min, max) -> { min .. max } |> Set |> MULTIPLE
+    | _ -> v
 
-let rec filterDivisibleByAssumeValid (v1:Value) (v2:Value) : Value*Value =
+let rec filterDivisibleByAssumeValid (v1: Value) (v2: Value) : Value * Value =
     let bothZero = (canContain v1 0L) && (canContain v2 0L)
-    match v1,v2 with
-    | CONST 0L, _ -> v1,v2 
-    | CONST _,CONST _ -> v1,v2
-    | INPUT (i,vals), CONST c ->
-        let vals = vals |> Map.filter (fun _ v -> v % c = 0L)
-        INPUT (i,vals), CONST c
-    | INPUT (i1,vals1), INPUT (i2,vals2) when smallest v1 > 0L && smallest v2 > 0L ->
-        let vals1 = vals1 |> Map.filter (fun _ v1 -> vals2 |> Map.exists (fun _ v2 -> v1 % v2 = 0L)) 
-        let vals2 = vals2 |> Map.filter (fun _ v2 -> vals1 |> Map.exists (fun _ v1 -> v1 % v2 = 0L))
-        INPUT (i1,vals1),INPUT (i2,vals2)
-    | RANGE _,_ when sizeOf v1 < 30 -> filterDivisibleByAssumeValid (expand v1) v2
-    | _,RANGE _ when sizeOf v2 < 30 -> filterDivisibleByAssumeValid v1 (expand v2)
+
+    match v1, v2 with
+    | _, CONST 1L -> v1, v2
+    | CONST 0L, _ -> v1, v2
+    | CONST _, CONST _ -> v1, v2
+    | INPUT (i, vals), CONST c ->
+        let vals =
+            vals |> Map.filter (fun _ v -> v % c = 0L)
+
+        INPUT(i, vals), CONST c
+    | INPUT (i1, vals1), INPUT (i2, vals2) when smallest v1 > 0L && smallest v2 > 0L ->
+        let vals1 =
+            vals1
+            |> Map.filter (fun _ v1 -> vals2 |> Map.exists (fun _ v2 -> v1 % v2 = 0L))
+
+        let vals2 =
+            vals2
+            |> Map.filter (fun _ v2 -> vals1 |> Map.exists (fun _ v1 -> v1 % v2 = 0L))
+
+        INPUT(i1, vals1), INPUT(i2, vals2)
+    | RANGE _, _ when sizeOf v1 < 30 -> filterDivisibleByAssumeValid (expand v1) v2
+    | _, RANGE _ when sizeOf v2 < 30 -> filterDivisibleByAssumeValid v1 (expand v2)
+    | v1,RANGE (min,max) when max > largest v1  ->
+        filterDivisibleByAssumeValid v1 (RANGE (min,largest v1))
+    | RANGE (min,max),v2 when min > 0L && smallest v2 > 0L ->
+        let factors = [1L..min] |> List.filter (fun i -> min % i = 0L) |> List.rev 
+        let valids = factors |> List.filter (canContain v2)
+        if valids.IsEmpty then filterDivisibleByAssumeValid (RANGE (min+1L,max)) v2 
+        else (RANGE(min/valids.Head,max/(smallest v2)),v2)
     | MULTIPLE s1, MULTIPLE s2 ->
-        let s2 = s2.Remove(0L) 
-        let ss = Seq.allPairs (s1 |> Set.toSeq) (s2 |> Set.toSeq)
-                 |> Seq.filter (fun (a,b) -> a % b = 0L)
-                 |> Seq.toList
-        let ss = if bothZero then (0L,0L)::ss else ss 
-        let v1 = ss |> List.map fst |> Set |> MULTIPLE 
-        let v2 = ss |> List.map snd |> Set |> MULTIPLE 
-        v1,v2 
+        let s2 = s2.Remove(0L)
+
+        let ss =
+            Seq.allPairs (s1 |> Set.toSeq) (s2 |> Set.toSeq)
+            |> Seq.filter (fun (a, b) -> a % b = 0L)
+            |> Seq.toList
+
+        let ss = if bothZero then (0L, 0L) :: ss else ss
+        let v1 = ss |> List.map fst |> Set |> MULTIPLE
+        let v2 = ss |> List.map snd |> Set |> MULTIPLE
+        v1, v2
     | _ -> failwith $"Not implemented: {v1 |> v2s} {v2 |> v2s}"
 
-let rec revMult (v1:Value) (v2:Value) : Option<Value> =
-    match v1,v2 with
-    | _,_ when canContain v1 0L && canContain v2 0L -> None
-    | CONST 0L,_ -> None 
+let rec revMult (v1: Value) (v2: Value) : Option<Value> =
+    match v1, v2 with
+    | _, _ when canContain v1 0L && canContain v2 0L -> None
+    | CONST 0L, _ -> None
     | _, CONST 0L -> Some(INVALID)
-    | CONST c1,CONST c2 -> if (c1 % c2) = 0L then CONST (c1/c2) |> Some else Some(INVALID)
+    | CONST c1, CONST c2 ->
+        if (c1 % c2) = 0L then
+            CONST(c1 / c2) |> Some
+        else
+            Some(INVALID)
     | MULTIPLE s, CONST c ->
         let s = s |> Set.filter (fun i -> i % c = 0L)
         let s = s |> Set.map (fun i -> i / c)
@@ -1529,17 +1562,36 @@ let rec revMult (v1:Value) (v2:Value) : Option<Value> =
         let s2 = s2.Remove(0L)
         let s1 = s1 |> Set.toSeq
         let s2 = s2 |> Set.toSeq
-        let s = Seq.allPairs s1 s2
-                |> Seq.filter (fun (a,b) -> a % b = 0L)
-                |> Seq.map (fun (a,b) -> (a/b))
-                |> Set
-        if s.IsEmpty then Some(INVALID)
-        else MULTIPLE s |> Some 
-    | RANGE _,_ when sizeOf v1 < 30 -> revMult (expand v1) v2
-    | _,RANGE _ when sizeOf v2 < 30 -> revMult v1 (expand v2)
+
+        let s =
+            Seq.allPairs s1 s2
+            |> Seq.filter (fun (a, b) -> a % b = 0L)
+            |> Seq.map (fun (a, b) -> (a / b))
+            |> Set
+
+        if s.IsEmpty then
+            Some(INVALID)
+        else
+            MULTIPLE s |> Some
+    | MULTIPLE s1, INPUT (i,vals) ->
+        let iv = vals |> Map.toList |> List.map snd
+        let valid1 s = iv |> List.exists (fun i -> s % i = 0L)
+        let s1 = s1 |> Set.filter valid1
+        if s1.IsEmpty then None else Some (MULTIPLE s1) 
+    | RANGE _, _ when sizeOf v1 < 30 -> revMult (expand v1) v2
+    | _, RANGE _ when sizeOf v2 < 30 -> revMult v1 (expand v2)
+    | RANGE (min,max), MULTIPLE s2 when min >= 0L && smallest v2 >= 0L ->
+        if s2 |> Set.filter (fun i -> min % i = 0L) |> Set.isEmpty |> not then Some(v1)
+        else revMult (RANGE(min+1L,max)) v2 
+
+    
     
     | _ -> failwith $"Not implemented {v1} {v2}"
-        
+
+let revModI (value: Value) (i: int64) =
+    // TODO: STEPPED_RANGE
+    addValue ANY_POSITIVE value
+
 let propagateALUBack (program: ALUProgram) : ALUProgram =
     let rec eval (alu: ALU) (program: ALUProgram) : ALUProgram =
         match program with
@@ -1551,16 +1603,17 @@ let propagateALUBack (program: ALUProgram) : ALUProgram =
             printf "Executing: "
             printInstruction inst
             printALU
+
             match inst with
             | ADDI (r1, CONST i) ->
                 if known r1 then
                     let v1 = get r1
                     let v1 = addValue v1 (CONST -i)
-                    let newInst = alu,inst 
-                    let alu = alu.Add(r1,v1)
-                    newInst::(eval alu rest)
+                    let newInst = alu, inst
+                    let alu = alu.Add(r1, v1)
+                    newInst :: (eval alu rest)
                 else
-                    (alu,inst) :: (eval alu rest)
+                    (alu, inst) :: (eval alu rest)
             | ADDR (r1, r2) ->
                 let v1 = get r1
                 let v2 = get r2 |> mulValue (CONST -1)
@@ -1569,38 +1622,96 @@ let propagateALUBack (program: ALUProgram) : ALUProgram =
                 let newInst = alu, inst
                 let alu = alu.Add(r1, v1)
                 newInst :: (eval alu rest)
-            | MULI (r1,v2) when v2 = CONST 0L ->
-                let newInst = alu,inst
+            | MULI (r1, v2) when v2 = CONST 0L ->
+                let newInst = alu, inst
                 let alu = alu.Remove r1
                 newInst :: (eval alu rest)
-            | MULR (r1,r2) ->
+            | MULR (r1, r2) ->
                 let v1 = get r1
                 let v2 = get r2
-                let v1,v2 = filterDivisibleByAssumeValid v1 v2
-                let alu = alu.Add(r1,v1).Add(r2,v2)
-                let newInst = alu,inst
+                let v1, v2 = filterDivisibleByAssumeValid v1 v2
+                let alu = alu.Add(r1, v1).Add(r2, v2)
+                let newInst = alu, inst
                 printfn $"before: {v1}"
                 let o1 = revMult v1 v2
                 printfn $"after: {o1}"
-                let alu = 
-                    if o1.IsSome then alu.Add (r1,o1 |> Option.get)
-                    else alu.Remove(r1)
+
+                let alu =
+                    if o1.IsSome then
+                        alu.Add(r1, o1 |> Option.get)
+                    else
+                        alu.Remove(r1)
+
                 newInst :: (eval alu rest)
-            | EQLI (r1, CONST 0L) when known r1 ->
+            | DIVI (r1, i) ->
+                let newInst = alu, inst
+                let alu = alu.Add(r1, mulValue (get r1) (CONST i))
+                newInst :: (eval alu rest)
+            | MODI (r1, i) when known r1 ->
                 let v1 = get r1
+                printfn $"MODI {r1}={v1} {i}"
+                // TODO: filter - but range restricted on first pass
+                let newInst = alu, inst
+                let alu = alu.Add(r1, revModI v1 i)
+                newInst :: (eval alu rest)
+            | MODI (r1, i) when not (known r1) ->
+                printfn $"MODI {r1}=? {i}"
+                failwith "Not implemented"
+            | EQLI (r1, CONST c) when known r1 ->
+                let v1 = get r1
+
                 match canContain v1 0L, canContain v1 1L with
-                | true,true ->
-                    let alu = alu.Add (r1,[0;1]|>Set|>MULTIPLE)
-                    let newInst = alu,inst
+                | true, _ ->
+                    let alu = alu.Add(r1, _0_or_1)
+                    let newInst = alu, inst
                     let alu = alu.Remove(r1)
-                    newInst : (eval alu rest)
-                | false, true -> _ // TODO: contineu here 
-                | true,false -> _ 
+                    newInst :: (eval alu rest)
+                | false, true ->
+                    let alu = alu.Add(r1, CONST 1L)
+                    let newInst = alu, inst
+                    let alu = alu.Add(r1, CONST c)
+                    newInst :: (eval alu rest)
                 | _ -> failwith $"Inconsistent state: {r1} {v1}"
             | EQLI (r1, CONST 0L) when not (known r1) ->
-                let newInst = alu,inst
+                let newInst = alu, inst
                 let alu = alu.Remove(r1)
                 newInst :: (eval alu rest)
+            | EQLR (r1, r2) when known r1 && known r2 ->
+                let v1 = get r1
+                let v2 = get r2
+
+                match canContain v1 0L, canContain v2 1L with
+                | true, true ->
+                    let alu = alu.Add(r1, _0_or_1)
+                    let newInst = alu, inst
+                    let alu = alu.Remove(r1)
+                    newInst :: (eval alu rest)
+                | true, false ->
+                    let alu = alu.Add(r1, CONST 0L)
+                    let newInst = alu, inst
+                    let alu = alu.Remove(r1)
+                    newInst :: (eval alu rest)
+                | false, true ->
+                    let alu = alu.Add(r1, CONST 1L)
+                    let newInst = alu, inst
+                    let alu = alu.Add(r1, v2)
+                    newInst :: (eval alu rest)
+                | _ -> failwith $"EQLR -> r1 not 0 or 1 {inst} {get r1}"
+            | EQLR (r1, r2) when not (known r1) ->
+                let newInst = alu, inst
+                let alu = alu.Remove(r1)
+                newInst :: (eval alu rest)
+            | SETI (r1, value) when known r1 ->
+                let value =
+                    match get r1, value with
+                    | v1, INPUT (id, vals) -> INPUT(id, vals |> Map.filter (fun _ i -> canContain v1 i))
+                    | _ -> failwith $"Not implemented: {r1} {value}"
+
+                let alu = alu.Add(r1, value)
+                let newInst = alu, SETI(r1, value)
+                let alu = alu.Remove(r1)
+                newInst :: (eval alu rest)
+            | SETI (r1, v) -> failwith $"Not implemented: {r1} {v}"
             | _ -> failwith $"not implemented: {inst}"
 
     let endState: ALU = [ (Z, CONST 0L) ] |> Map
