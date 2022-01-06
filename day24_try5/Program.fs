@@ -1728,6 +1728,9 @@ let consolidateValue (value:Value) =
     | MULTIPLE s2 when s2.Count = 1 -> s2 |> Set.toList |> List.head |> CONST
     | RANGE (min,max) when min = max -> CONST min 
     | RANGE (min,max) when sizeOf value < 30 -> [min..max] |> Set |> MULTIPLE
+    | INPUT (_,vals) when vals.Count = 9 ->
+        if vals |> Map.exists (fun _ i -> i <> 0L) then value
+        else CONST 0L 
     | _ -> value 
 
 type OPER =
@@ -1744,27 +1747,29 @@ let rec testOper (oper:OPER) (value1:Value) (value2:Value) (result:Value) : Valu
              | OP_MOD -> (%)
     let value1 = consolidateValue value1
     let value2 = consolidateValue value2
-    printfn $"testOper {value1 |> v2s} X {value2 |> v2s} -> {result |> v2s} "
-    match value1, value2 with
-    | CONST _, CONST _ -> (value1,value2)
-    | CONST c1, INPUT (id,vals) ->
+    printfn $"testOper {oper} {value1 |> v2s} {value2 |> v2s} -> {result |> v2s} "
+    match oper,value1, value2 with
+    | _,CONST _, CONST _ -> (value1,value2)
+    | _,CONST c1, INPUT (id,vals) ->
         let valid2 = vals |> Map.toList
                           |> List.map snd
                           |> List.filter (fun i2 -> op c1 i2 |> (canContain result))
                           |> Set 
         let value2 = INPUT (id,vals |> Map.filter (fun _ v -> valid2.Contains v))
         value1,value2
-    | CONST c1, MULTIPLE m2 ->
+    | _,CONST c1, MULTIPLE m2 ->
         let value2 = m2 |> Set.filter (fun v2 -> op c1 v2 |> (canContain result)) |> MULTIPLE
         printfn $"testOper:<- {value1} {value2}"
         value1,value2
-    | MULTIPLE m1, CONST c2 -> 
+    | OP_PLUS,CONST 0L,_ ->
+        value1,intersectWith value2 result 
+    | _,MULTIPLE m1, CONST c2 -> 
         let pairs = m1 |> Set.toList |> List.map (fun v1 -> v1,c2)
         let valid1 = pairs |> List.map fst |> Set 
         let value1 = m1 |> Set.filter (valid1.Contains) |> MULTIPLE
         printfn $"testOper:<- {value1} {value2}"
         value1,value2 
-    | MULTIPLE m1, MULTIPLE m2 ->
+    | _,MULTIPLE m1, MULTIPLE m2 ->
         let pairs =
             List.allPairs (m1 |> Set.toList) (m2 |> Set.toList)
             |> List.filter (fun (a,b) -> op a b |> (canContain result))
@@ -1774,23 +1779,54 @@ let rec testOper (oper:OPER) (value1:Value) (value2:Value) (result:Value) : Valu
         let value2 = m2 |> Set.filter (valid2.Contains) |> MULTIPLE
         printfn $"testOper:<- {value1} {value2}"
         value1,value2
-    | RANGE _,_ when sizeOf value1 < 30 ->
+    | OP_MULT, _,_ when result = CONST 0L ->
+        match canContain value1 0L, canContain value2 0L with
+        | true,true -> value1,value2
+        | true,false -> CONST 0L,value2
+        | false,true -> value1,CONST 0L
+        | false,false -> failwith "{value1} * {value2} = 0"
+    | _,RANGE _,_ when sizeOf value1 < 30 ->
         testOper oper (expand value1) value2 result
-    | RANGE (min1,max1),CONST c2 ->
-        let min = op min1 c2 
-        let max = op max1 c2 
-        let minOK = canContain result min
-        let maxOK = canContain result max
-        let ok = minOK && maxOK
-        if ok then value1,value2
+    | OP_PLUS, RANGE (min1,max1), _ -> 
+        let min2 = smallest value2 
+        let max2 = largest value2
+        let maxR = largest result
+        let minR = smallest result
+        let min1a = minR - max2
+        let max1a = maxR - min2 
+        if min1a > min1 || max1a < max1 then
+            let min1 = max min1 min1a
+            let max1 = min max1 max1a
+            testOper oper (RANGE (min1,max1)) value2 result
         else
-            let min1 = if minOK then min1 else min1 + 1L
-            let max1 = if maxOK then max1 else max1 - 1L
-            testOper oper (RANGE (min1,max1)) value2 result 
-        
-    | _ -> failwith $"Not implemented: {oper} {value1} {value2} -> {result}"
-
-    
+            match value2 with
+            | CONST _ -> value1,value2
+            | INPUT (id,vals) ->
+               let vals = vals
+                          |> Map.filter (fun _ v2 -> minR <= min1 + v2)
+                          |> Map.filter (fun _ v2 -> maxR >= max1 + v2)
+               value1,INPUT(id,vals)
+            | MULTIPLE m2 ->
+                let m2 = m2
+                         |> Set.filter (fun v2 -> minR <= min1 + v2)
+                         |> Set.filter (fun v2 -> maxR >= max1 + v2)
+                value1, MULTIPLE m2
+            | RANGE _ ->
+                    let min2a = minR - max1
+                    let max2a = maxR - min1
+                    if min2a > min2 || max2a < max2 then
+                        let min2 = max min2 min2a
+                        let max2 = min max2 max2a
+                        testOper oper value1 (RANGE(min2,max2)) result
+                    else
+                        value1,value2
+    | OP_MULT, RANGE _, value2 when sizeOf(result) > 30 && smallest result > 0 && smallest value1 >= 0 && smallest value2 >= 0 ->
+        value1,value2
+    | OP_DIV, RANGE(min,max), CONST c when sizeOf(result) > 30 ->
+        value1,value2
+    | OP_MOD, RANGE(min,max), CONST c when result = RANGE (0,c-1L) ->
+        value1,value2
+    | _ -> failwith $"Not implemented: {oper} {value1 |> v2s} {value2 |> v2s} -> {result |> v2s}"
 
 let rec filterOnCalculatedResults (program:ALUProgram) =
     let rec eval (program:ALUProgram) : ALUProgram =
@@ -1816,6 +1852,8 @@ let rec filterOnCalculatedResults (program:ALUProgram) =
                 let v1,v2 = testOper OP_PLUS v1 v2 result 
                 let inputALU = inputALU.Add(r1,v1).Add(r2,v2)
                 (outputALU,inst)::(eval ((inputALU,prevInst)::rest))
+            | MULI (r1,CONST 0L) ->
+                eval ((outputALU,(SETI (r1,CONST 0L)))::(inputALU,prevInst)::rest)
             | MULI (r1,v2) -> 
                 let result = outputALU.TryFind (r1) |> Option.get
                 let v1 = inputALU.TryFind (r1) |> Option.get
@@ -1841,9 +1879,11 @@ let rec filterOnCalculatedResults (program:ALUProgram) =
                 let v1,_ = testOper OP_MOD v1 (CONST i2) result 
                 let inputALU = inputALU.Add(r1,v1)
                 (outputALU,MODI(r1,i2))::(eval ((inputALU,prevInst)::rest))
-              | EQLI (r1,r2) ->
+              | EQLI (r1,v2) ->
                   match outputALU.TryFind r1 |> Option.get with
-                  | CONST 1L -> failwith $"Not implemented {inst}"
+                  | CONST 1L ->
+                      let inputALU = inputALU.Add(r1,v2)
+                      (outputALU,inst)::(eval ((inputALU,prevInst)::rest))
                   | CONST 0L -> (outputALU,inst) :: (eval ((inputALU,prevInst)::rest))
                   | MULTIPLE m when m.Contains 0L && m.Contains 1L -> (outputALU,inst) :: (eval ((inputALU,prevInst)::rest))
                   | value -> failwith $"Not implemented {inst} {value}" 
@@ -1852,7 +1892,12 @@ let rec filterOnCalculatedResults (program:ALUProgram) =
                   | CONST 1L -> failwith $"Not implemented {inst}"
                   | CONST 0L -> (outputALU,inst) :: (eval ((inputALU,prevInst)::rest))
                   | MULTIPLE m when m.Contains 0L && m.Contains 1L -> (outputALU,inst) :: (eval ((inputALU,prevInst)::rest))
-                  | value -> failwith $"Not implemented {inst} {value}" 
+                  | value -> failwith $"Not implemented {inst} {value}"
+               | SETI (r1,v2) ->
+                  let v1 = outputALU.TryFind r1 |> Option.get
+                  let v2 = intersectWith v2 v1
+                  let inputALU = inputALU.Add(r1,v2)
+                  (outputALU,SETI(r1,v2))::(eval ((inputALU,prevInst)::rest))
             | _ -> failwith $"Not implemented: {inst}"
     program |> List.rev |> eval |> List.rev 
 
