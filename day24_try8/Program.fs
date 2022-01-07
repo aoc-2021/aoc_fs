@@ -220,6 +220,10 @@ let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*V
     | MOD,CONST p1,CONST m,_ ->
         let result = intersection (CONST (p1%m)) result
         MOD,param1,param2,result
+    | MOD,VALUES v,CONST c,_ ->
+        let result = intersection (v |> Set.map (fun i -> i % c) |> VALUES) result
+        let param1 = v |> Set.filter (fun i -> i % c |> (canContain result)) |> VALUES 
+        MOD,param1,param2,result
     | EQL,_,_,_ ->
         let result = intersection (eqValue param1 param2) result
         if result = CONST 1L then
@@ -349,7 +353,7 @@ let task1iter (program:Program) =
     program 
 
 let task1 (program:Program) =
-    {1..21} |> Seq.fold (fun program i -> task1iter program) program 
+    {1..31} |> Seq.fold (fun program i -> task1iter program) program 
     // program |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter
 let program1 = task1 program 
 
