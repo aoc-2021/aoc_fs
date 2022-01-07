@@ -20,7 +20,6 @@ type Value =
     | TO of int64 
     | VALUES of Set<int64>
     | CONST of int64
-    | UNUSED 
 
 let ALL_INPUTS = [1L..9L] |> Set |> VALUES
 let ONE_AND_ZERO = [0L;1L] |> Set |> VALUES
@@ -37,7 +36,6 @@ let valueToString (value:Value) =
     | CONST c -> c |> string
     | FROM c -> $"[{c},∞⟩"
     | TO c -> $"⟨-∞,{c}]"
-    | UNUSED -> "⟤"
 
 let canContain (value:Value) (i:int64) =
     match value with
@@ -48,7 +46,6 @@ let canContain (value:Value) (i:int64) =
     | NOT_ZERO -> i <> 0L
     | RANGE (a,b) -> i >= a && i <= b
     | VALUES s -> s.Contains i
-    | UNUSED -> true 
 
 let rec intersection (value1:Value) (value2:Value) =
     // printfn $"intersection {value1} {value2}"
@@ -57,7 +54,7 @@ let rec intersection (value1:Value) (value2:Value) =
     | UNKNOWN,_ -> value2
     | _,UNKNOWN -> value1 
     | CONST c, _ when canContain value2 c -> CONST c 
-    | CONST c, _ -> failwith "$Invalid intersection {value1} {value2}"
+    | CONST c, _ -> failwith $"Invalid intersection {value1} {value2}"
     | _, CONST _ -> intersection value2 value1
     | NATURAL,NATURAL -> NATURAL
     | _, NATURAL -> intersection value2 value1
@@ -73,7 +70,6 @@ let rec intersection (value1:Value) (value2:Value) =
     | RANGE _,_ -> intersection value2 value1
     | VALUES s1,VALUES s2 -> Set.intersect s1 s2 |> VALUES 
     | VALUES s1,_ -> s1 |> Set.filter (fun i -> canContain value2 i) |> VALUES
-    | _,UNUSED -> UNUSED 
 
 
 type Op =
@@ -135,37 +131,68 @@ let addToValue (value:Value) (i:int64) =
     | VALUES s -> s |> Set.map ((+) i) |> VALUES 
     | _ -> failwith $"Not implemented: {value} {i}"
     
+let mulValue (value:Value) (i:int64) =
+    match value with
+    | UNKNOWN -> UNKNOWN
+    | CONST c -> CONST (c * i)
+    | NATURAL when i > 0L -> NATURAL
+    | NATURAL when i < 0L -> TO 0L
+    | POSITIVE when i > 0L -> FROM i
+    | POSITIVE when i < 0L -> TO (-i)
+    | RANGE (a,b) when i > 0L -> RANGE (a*i,b*i)
+    | RANGE (a,b) when i < 0L -> RANGE (b*i,a*i)
+    | VALUES s -> s |> Set.map ((*) i) |> VALUES
+
+let divValue (value:Value) (i:int64) =
+   match value with
+   | UNKNOWN -> UNKNOWN
+   | CONST c -> CONST (c/i)
+   | NATURAL when i > 0L -> NATURAL
+   | POSITIVE when i > 0L -> POSITIVE
+   | POSITIVE when i < 0L -> NEGATIVE
+   | RANGE (a,b) when a >= 0L && i > 0 -> RANGE (a/i, b/i)
+   | VALUES s -> s |> Set.map (fun v -> v / i) |> VALUES 
+   
     
 let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*Value*Value*Value =
-    printfn $"narrowValues {op} {param1} {param2} {result}"
+    // printfn $"narrowValues {op} {param1} {param2} {result}"
     match op,param1,param2,result with
     | NOP,_,_,_ ->
         let inter = intersection param1 result
         op,inter, param2, inter
-    | ADD,_,_,UNUSED -> narrowValues NOP param1 param2 result 
     | ADD,_,CONST 0L,_ -> narrowValues NOP param1 param2 result
     | ADD,CONST 0L,_,_ -> narrowValues SET param1 param2 result 
     | ADD,_,CONST c,_ ->
         let result = intersection (addToValue param1 c) result
         let param1 = intersection (addToValue result (-c)) param1
         op,param1,param2,result
-    | MUL,_,_,UNUSED -> narrowValues NOP param1 param2 result 
+    | ADD,UNKNOWN,UNKNOWN,_ -> ADD,param1,param2,result 
     | MUL,_,CONST 0L,_ -> narrowValues SET param1 (CONST 0L) result
-    | DIV,_,CONST 1L,_ -> narrowValues NOP param1 param2 result 
+    | MUL,UNKNOWN,UNKNOWN,UNKNOWN -> MUL,UNKNOWN,UNKNOWN,UNKNOWN
+    | DIV,_,CONST 1L,_ -> narrowValues NOP param1 param2 result
+    | DIV,UNKNOWN,_,UNKNOWN -> DIV,param1,param2,result 
     | MOD,UNKNOWN,_,_ -> narrowValues MOD NATURAL param2 result
     | MOD,_,CONST c,UNKNOWN -> narrowValues MOD param1 param2 (RANGE (0,c-1L))
-    | EQL,_,_,UNUSED -> narrowValues NOP param1 param2 result 
+    | MOD,NATURAL,CONST c,_ -> MOD,param1,param2,result
+    | MOD,CONST p1,CONST m,_ ->
+        let result = intersection (CONST (p1%m)) result
+        MOD,param1,param2,result 
     | EQL,UNKNOWN,UNKNOWN,UNKNOWN -> EQL,UNKNOWN,UNKNOWN,ONE_AND_ZERO
     | EQL,_,_,UNKNOWN -> narrowValues EQL param1 param2 ONE_AND_ZERO
-    | SET,CONST a,CONST b,_ when a = b -> narrowValues NOP UNUSED param2 result
-    | SET,_,_,UNUSED -> narrowValues NOP param1 param2 result 
+    | EQL,_,CONST 0L,CONST 0L ->
+        let param1 = intersection NOT_ZERO param1
+        op,param1,param2,result
+    | EQL,_,_,_ when (canContain result 0L) && (canContain result 1L) ->
+        op,param1,param2,ONE_AND_ZERO
+    | SET,CONST a,CONST b,_ when a = b -> narrowValues NOP param1 param2 result
     | SET,_,_,_ ->
         let value = intersection result param2
-        op,UNUSED,value,value 
+        op,param1,value,value 
     | _,UNKNOWN,UNKNOWN,UNKNOWN -> op,UNKNOWN,UNKNOWN,UNKNOWN
     | _ ->
-        printfn $"Not handled: {op}"
+        printfn $"Not handled: {op} {param1 |> valueToString} {param2 |> valueToString} {result |> valueToString}"
         op,param1,param2,result 
+
 type Step (op:Op,reg:Reg,param:Param,before:ALU,after:ALU) =
     member this.Op = op
     member this.Reg = reg
@@ -201,16 +228,16 @@ type Step (op:Op,reg:Reg,param:Param,before:ALU,after:ALU) =
             let value = after.get reg
             let value = intersection ALL_INPUTS value
             let after = after.set reg value
-            let before = before.set reg UNUSED
             let before,after = before.SyncValues (otherRegs reg) after 
             Step(op,reg,NA,before,after)
         
-    
     static member init (op:Op) (reg:Reg) (param:Param) =
         Step (op,reg,param,ALU.unknown,ALU.unknown)
         
     override this.ToString () =
-        $"STEP: {op} {reg} {param |> paramToString}  in={before} out={after}"
+        match op with
+        | NOP -> $"STEP: {op}        in={before} out={after}"
+        | _ ->   $"STEP: {op} {reg} {param |> paramToString,3}  in={before} out={after}"
         
 type Program = list<Step> 
 
@@ -266,6 +293,7 @@ let rec syncBetweenSteps (program:Program) =
     | [] -> []
     | [_] -> program
     | step1::step2::rest ->
+        printfn $"SYNC: {step1} {step2}"
         let alu,_ = step1.After.SyncValues ALL_REGS step2.Before
         let step1 = step1.setAfter alu
         let step2 = step2.setBefore alu
@@ -282,6 +310,7 @@ let task1 (program:Program) =
     |> task1iter
     |> task1iter
     |> task1iter
+    |> task1iter 
 
 let program1 = task1 program 
 
