@@ -168,9 +168,17 @@ let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*V
         op,param1,param2,result
     | ADD,UNKNOWN,UNKNOWN,_ -> ADD,param1,param2,result 
     | MUL,_,CONST 0L,_ -> narrowValues SET param1 (CONST 0L) result
-    | MUL,UNKNOWN,UNKNOWN,UNKNOWN -> MUL,UNKNOWN,UNKNOWN,UNKNOWN
+    | MUL,UNKNOWN,param2,UNKNOWN when param2 <> CONST 0L -> MUL,UNKNOWN,param2,UNKNOWN
+    | MUL,CONST c,_,_ when c > 0L -> 
+        let result = intersection (mulValue param2 c) result
+        let param2 = intersection (divValue result c) param2
+        op,param1,param2,result  
     | DIV,_,CONST 1L,_ -> narrowValues NOP param1 param2 result
-    | DIV,UNKNOWN,_,UNKNOWN -> DIV,param1,param2,result 
+    | DIV,UNKNOWN,_,UNKNOWN -> DIV,param1,param2,result
+    | DIV,NATURAL,CONST c,UNKNOWN when c >= 0L -> DIV,NATURAL,CONST c,NATURAL
+    | DIV,NATURAL,_,NATURAL ->
+        let param2 = intersection param2 NATURAL
+        DIV,param1,param2,result 
     | MOD,UNKNOWN,_,_ -> narrowValues MOD NATURAL param2 result
     | MOD,_,CONST c,UNKNOWN -> narrowValues MOD param1 param2 (RANGE (0,c-1L))
     | MOD,NATURAL,CONST c,_ -> MOD,param1,param2,result
@@ -293,7 +301,7 @@ let rec syncBetweenSteps (program:Program) =
     | [] -> []
     | [_] -> program
     | step1::step2::rest ->
-        printfn $"SYNC: {step1} {step2}"
+        // printfn $"SYNC: {step1} {step2}"
         let alu,_ = step1.After.SyncValues ALL_REGS step2.Before
         let step1 = step1.setAfter alu
         let step2 = step2.setBefore alu
@@ -307,6 +315,8 @@ let task1iter (program:Program) =
 
 let task1 (program:Program) =
     program 
+    |> task1iter
+    |> task1iter
     |> task1iter
     |> task1iter
     |> task1iter
