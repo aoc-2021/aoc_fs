@@ -149,7 +149,26 @@ let divValue (value:Value) (i:int64) =
    | POSITIVE when i < 0L -> NEGATIVE
    | RANGE (a,b) when a >= 0L && i > 0 -> RANGE (a/i, b/i)
    | VALUES s -> s |> Set.map (fun v -> v / i) |> VALUES 
-   
+
+let rec eqValue (value1:Value) (value2:Value) : Value =
+    match value1,value2 with
+    | UNKNOWN,_ -> ONE_AND_ZERO
+    | _,UNKNOWN -> ONE_AND_ZERO
+    | CONST a, CONST b when a <> b -> CONST 0L
+    | CONST a, CONST b when a = b -> CONST 1L
+    | CONST a, _ when canContain value2 a -> ONE_AND_ZERO
+    | CONST a, _ when not (canContain value2 a) -> CONST 0L
+    | _, CONST _ -> eqValue value2 value1
+    | NATURAL,NEGATIVE -> failwith $"Not implemented {value1} {value2}"
+    | NATURAL,NATURAL -> ONE_AND_ZERO
+    | _,NATURAL -> eqValue value2 value1
+    | NATURAL,POSITIVE -> ONE_AND_ZERO
+    | VALUES s, CONST c -> if s.Contains c then ONE_AND_ZERO else CONST 0L
+    | VALUES s1,VALUES s2 -> if Set.intersect s1 s2 |> Set.isEmpty then CONST 0L else ONE_AND_ZERO
+    | _, VALUES _ -> eqValue value2 value1
+    | VALUES s1,_ ->
+        if s1 |> Set.exists (canContain value2) then ONE_AND_ZERO else CONST 0L 
+    | _ -> failwith $"Not implemented: {value1} {value2}"
     
 let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*Value*Value*Value =
     match op,param1,param2,result with
@@ -180,14 +199,14 @@ let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*V
     | MOD,NATURAL,CONST c,_ -> MOD,param1,param2,result
     | MOD,CONST p1,CONST m,_ ->
         let result = intersection (CONST (p1%m)) result
-        MOD,param1,param2,result 
-    | EQL,UNKNOWN,UNKNOWN,UNKNOWN -> EQL,UNKNOWN,UNKNOWN,ONE_AND_ZERO
-    | EQL,_,_,UNKNOWN -> narrowValues EQL param1 param2 ONE_AND_ZERO
-    | EQL,_,CONST 0L,CONST 0L ->
-        let param1 = intersection NOT_ZERO param1
-        op,param1,param2,result
-    | EQL,_,_,_ when (canContain result 0L) && (canContain result 1L) ->
-        op,param1,param2,ONE_AND_ZERO
+        MOD,param1,param2,result
+    | EQL,_,_,_ ->
+        let result = intersection (eqValue param1 param2) result
+        if result = CONST 1L then
+            let value = intersection param1 param2
+            EQL,value,value,result
+        else
+            EQL,param1,param2,result 
     | SET,CONST a,CONST b,_ when a = b -> narrowValues NOP param1 param2 result
     | SET,_,_,_ ->
         let value = intersection result param2
@@ -311,6 +330,7 @@ let task1iter (program:Program) =
 
 let task1 (program:Program) =
     program 
+    |> task1iter
     |> task1iter
     |> task1iter
     |> task1iter
