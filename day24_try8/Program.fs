@@ -44,6 +44,8 @@ let canContain (value:Value) (i:int64) =
     | NOT_ZERO -> i <> 0L
     | RANGE (a,b) -> i >= a && i <= b
     | VALUES s -> s.Contains i
+    | TO upper -> i <= upper 
+    | _ -> failwith $"Not implemented {value} {i}"
 
 let rec intersection (value1:Value) (value2:Value) =
     let isPositive (i:int64) = i > 0L
@@ -55,6 +57,7 @@ let rec intersection (value1:Value) (value2:Value) =
     | _, CONST _ -> intersection value2 value1
     | NATURAL,NATURAL -> NATURAL
     | _, NATURAL -> intersection value2 value1
+    | NATURAL,VALUES vs -> vs |> Set.filter ((<) -1L) |> VALUES 
     | POSITIVE,POSITIVE -> POSITIVE
     | POSITIVE,NOT_ZERO -> POSITIVE
     | POSITIVE,RANGE (a,b) when a > 0 -> value2
@@ -67,6 +70,8 @@ let rec intersection (value1:Value) (value2:Value) =
     | RANGE _,_ -> intersection value2 value1
     | VALUES s1,VALUES s2 -> Set.intersect s1 s2 |> VALUES 
     | VALUES s1,_ -> s1 |> Set.filter (fun i -> canContain value2 i) |> VALUES
+    | TO a, TO b -> TO (min a b)
+    | _ -> failwith $"Not implemented: {value1} {value2}"
 
 
 type Op =
@@ -176,18 +181,33 @@ let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*V
         let inter = intersection param1 result
         op,inter, param2, inter
     | ADD,_,CONST 0L,_ -> narrowValues NOP param1 param2 result
-    | ADD,CONST 0L,_,_ -> narrowValues SET param1 param2 result 
+    | ADD,CONST 0L,_,_ -> narrowValues SET param1 param2 result
+    | ADD,NATURAL,_,NATURAL -> ADD,NATURAL,param2,NATURAL 
     | ADD,_,CONST c,_ ->
         let result = intersection (addToValue param1 c) result
         let param1 = intersection (addToValue result (-c)) param1
         op,param1,param2,result
-    | ADD,UNKNOWN,UNKNOWN,_ -> ADD,param1,param2,result 
+    | ADD,NATURAL,_,CONST 0L -> ADD,NATURAL,TO 0L,CONST 0L 
+    | ADD,UNKNOWN,UNKNOWN,_ -> ADD,param1,param2,result
+    | MUL,_,CONST 1L,_ -> narrowValues NOP param1 param2 result 
     | MUL,_,CONST 0L,_ -> narrowValues SET param1 (CONST 0L) result
     | MUL,UNKNOWN,param2,UNKNOWN when param2 <> CONST 0L -> MUL,UNKNOWN,param2,UNKNOWN
+    | MUL,CONST 0L,_,_ -> MUL,CONST 0L,param2,(intersection (CONST 0L) result)
     | MUL,CONST c,_,_ when c > 0L -> 
         let result = intersection (mulValue param2 c) result
         let param2 = intersection (divValue result c) param2
-        op,param1,param2,result  
+        op,param1,param2,result
+    | MUL,NATURAL,VALUES v2,_ ->
+        if v2 |> Set.exists ((>) 0L) then failwith $"Unsupported[2] {op} {param1} {param2} -> {result}"
+        else op,param1,param2,NATURAL
+    | MUL,NATURAL,CONST _,NATURAL -> MUL,NATURAL,param2,NATURAL
+    | MUL,VALUES v1,VALUES v2,_ ->
+        let pairs = List.allPairs (v1 |> Set.toList) (v2 |> Set.toList)
+        let pairs = pairs |> List.filter (fun (a,b) -> canContain result (a*b))
+        let param1 = pairs |> List.map fst |> Set |> VALUES
+        let param2 = pairs |> List.map snd |> Set |> VALUES 
+        let result = pairs |> List.map (fun (a,b) -> a*b) |> Set |> VALUES
+        MUL,param1,param2,result
     | DIV,_,CONST 1L,_ -> narrowValues NOP param1 param2 result
     | DIV,UNKNOWN,_,UNKNOWN -> DIV,param1,param2,result
     | DIV,NATURAL,CONST c,UNKNOWN when c >= 0L -> DIV,NATURAL,CONST c,NATURAL
@@ -329,15 +349,8 @@ let task1iter (program:Program) =
     program 
 
 let task1 (program:Program) =
-    program 
-    |> task1iter
-    |> task1iter
-    |> task1iter
-    |> task1iter
-    |> task1iter
-    |> task1iter
-    |> task1iter 
-
+    {1..21} |> Seq.fold (fun program i -> task1iter program) program 
+    // program |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter |> task1iter
 let program1 = task1 program 
 
 printProgram program1
