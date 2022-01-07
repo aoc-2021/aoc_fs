@@ -2,8 +2,6 @@ open System.IO
 
 let file = File.ReadAllLines "input.txt" |> Array.toList 
 
-file |> List.map (printfn "%A")
-
 type Reg = W | X | Y | Z
 
 let ALL_REGS = [W;X;Y;Z]
@@ -48,7 +46,6 @@ let canContain (value:Value) (i:int64) =
     | VALUES s -> s.Contains i
 
 let rec intersection (value1:Value) (value2:Value) =
-    // printfn $"intersection {value1} {value2}"
     let isPositive (i:int64) = i > 0L
     match value1,value2 with
     | UNKNOWN,_ -> value2
@@ -155,7 +152,6 @@ let divValue (value:Value) (i:int64) =
    
     
 let rec narrowValues (op:Op) (param1:Value) (param2:Value) (result:Value) : Op*Value*Value*Value =
-    // printfn $"narrowValues {op} {param1} {param2} {result}"
     match op,param1,param2,result with
     | NOP,_,_,_ ->
         let inter = intersection param1 result
@@ -282,7 +278,7 @@ let printProgram (program:Program) =
 
 let program = readProgram file 
 
-printProgram program
+// printProgram program
 
 printfn "Solving:"
 
