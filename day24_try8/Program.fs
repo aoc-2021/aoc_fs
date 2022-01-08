@@ -59,7 +59,8 @@ let consolidate (value:Value) =
     | NOT_ZERO -> NOT_ZERO
     | RANGE (a,b) when a=b -> CONST a
     | RANGE (a,b) when b-a < 10 -> [a..b] |> Set |> VALUES
-    | RANGE _ -> value 
+    | RANGE _ -> value
+    | VALUES s when s.Count = 1 -> s |> Set.toList |> List.head |> CONST
     | VALUES s when s.Count > 40 -> RANGE (s |> Set.toList |> List.min, s |> Set.toList |> List.max )
     | VALUES _ -> value
     | FROM 0L -> NATURAL
@@ -244,6 +245,7 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         printfn $"Skipping: {op} {param1} {param2} {result}"
         op,param1,param2,result 
     match op, param1, param2, result with
+    | ADD,UNKNOWN,UNKNOWN,UNKNOWN -> ADD,UNKNOWN,UNKNOWN,UNKNOWN 
     | ADD,_,CONST 0L,_ ->
         let value = intersection param1 result
         ADD,value,param2,value
@@ -273,6 +275,11 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let smallest = s1 |> Set.toList |> List.min
         let result = if smallest = 0L then NATURAL else FROM smallest
         ADD,param1,param2,result
+    | ADD,RANGE(a,b), VALUES s,_ when s.MinimumElement > 0L && a > 0L ->
+        let result = intersection (RANGE (a+s.MinimumElement, b+s.MaximumElement)) result
+        // TODO : filter param1,param2 
+        ADD,param1,param2,result
+    | MUL,UNKNOWN,UNKNOWN,UNKNOWN -> MUL,UNKNOWN,UNKNOWN,UNKNOWN 
     | MUL,_,CONST 0L,_ ->
         MUL,param1,param2,(intersection (CONST 0L) result)
     | MUL,CONST 0L,_,_ ->
@@ -300,6 +307,13 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
     | MUL,NATURAL,VALUES s1,_ ->
         let isNatural = s1 |> Set.exists ((fun i -> i < 0L)) |> not
         let result = if isNatural then NATURAL else UNKNOWN
+        MUL,param1,param2,result
+    | MUL,RANGE(a,b),CONST c,_ when c > 0L ->
+        // TODO: filter param 1
+        let result = intersection (RANGE (a*c,b*c)) result
+        MUL,param1,param2,result
+    | MUL,FROM from,CONST c,_ when from > 0L && c > 0L ->
+        let result = intersection (FROM (from*c)) result
         MUL,param1,param2,result 
     | DIV,_,CONST 1L,_ ->
         let value = intersection param1 result
