@@ -120,6 +120,7 @@ let rec intersection (value1: Value) (value2: Value) =
     | NATURAL,FROM i when i <= 0L -> NATURAL
     | FROM a,FROM b -> FROM (max a b)
     | FROM from,RANGE (a,_) when a > from -> value2
+    | FROM from,RANGE (a,b) when a <= from && b >= from -> RANGE (from,b)
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 
@@ -249,7 +250,8 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         printfn $"Skipping: {op} {param1} {param2} {result}"
         op,param1,param2,result 
     match op, param1, param2, result with
-    | ADD,UNKNOWN,UNKNOWN,UNKNOWN -> ADD,UNKNOWN,UNKNOWN,UNKNOWN 
+    | ADD,UNKNOWN,UNKNOWN,UNKNOWN -> ADD,UNKNOWN,UNKNOWN,UNKNOWN
+    | ADD,UNKNOWN,UNKNOWN,_ -> ADD,param1,param2,result
     | ADD,_,CONST 0L,_ ->
         let value = intersection param1 result
         ADD,value,param2,value
@@ -373,7 +375,11 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         MOD,param1,param2,result
     | MOD,RANGE(a,b),CONST m,_ when b-a > m ->
         let result = intersection (RANGE (0L,m-1L)) result
-        MOD,param1,param2,result 
+        MOD,param1,param2,result
+    | MOD,NATURAL,CONST c,VALUES r when r.MinimumElement > 0L->
+        let param1 = FROM r.MinimumElement
+        let result = r |> Set.filter (fun i -> i >= 0L && i < c) |> VALUES 
+        MOD,param1,param2,result
     | EQL,_,_,CONST 1L ->
         let value = intersection param1 param2
         EQL,value,value,result
