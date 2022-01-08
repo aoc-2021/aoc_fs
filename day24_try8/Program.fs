@@ -53,11 +53,15 @@ let expand (value:Value) =
 let consolidate (value:Value) =
     match value with
     | UNKNOWN -> UNKNOWN
+    | CONST c -> CONST c 
     | NATURAL -> NATURAL
     | POSITIVE -> POSITIVE
     | NOT_ZERO -> NOT_ZERO
     | RANGE (a,b) when a=b -> CONST a
     | RANGE (a,b) when b-a < 10 -> [a..b] |> Set |> VALUES
+    | RANGE _ -> value 
+    | VALUES s when s.Count > 40 -> RANGE (s |> Set.toList |> List.min, s |> Set.toList |> List.max )
+    | VALUES _ -> value 
     | _ -> failwith $"consolidate: not implemented: {value}"
 
 let canContain (value: Value) (i: int64) =
@@ -84,6 +88,9 @@ let rec intersection (value1: Value) (value2: Value) =
     | NATURAL, NATURAL -> NATURAL
     | _, NATURAL -> intersection value2 value1
     | NATURAL, VALUES vs -> vs |> Set.filter ((<) -1L) |> VALUES
+    | NATURAL, RANGE (a,b) when a >= 0L -> value2
+    | NATURAL, RANGE (a,b) when b < 0L -> failwith "$intersect NATURAL {value2} = Ø"
+    | NATURAL, RANGE (a,b) when a < 0L && b >= 0L -> RANGE (0L,b)
     | POSITIVE, POSITIVE -> POSITIVE
     | POSITIVE, NOT_ZERO -> POSITIVE
     | POSITIVE, RANGE (a, b) when a > 0 -> value2
@@ -220,6 +227,14 @@ let rec removeFromValue (value1:Value) (value2:Value) =
     | _ -> failwith $"Not implemented {value1} - {value2}"
 
 let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : Op * Value * Value * Value =
+    let param1 = consolidate param1
+    let param2 = consolidate param2
+    let result = consolidate result
+    
+    if param1 = VALUES Set.empty || param2 = VALUES Set.empty || result = VALUES Set.empty then
+        // failwith $"narrowValues EMPTY {op} {param1} {param2} {result}"
+        printfn $"narrowValues EMPTY {op} {param1} {param2} {result}"
+    
     let skip () =
         printfn $"Skipping: {op} {param1} {param2} {result}"
         op,param1,param2,result 
@@ -248,7 +263,7 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let param1 = pairs |> List.map fst |> Set |> VALUES
         let param2 = pairs |> List.map snd |> Set |> VALUES
         let result = pairs |> List.map (fun (a,b) -> a+b) |> Set |> VALUES // |> consolidate
-        MUL,param1,param2,result
+        ADD,param1,param2,result
     | MUL,_,CONST 0L,_ ->
         MUL,param1,param2,(intersection (CONST 0L) result)
     | MUL,CONST 0L,_,_ ->
@@ -419,14 +434,19 @@ let task1iter (program: Program) =
     program
 
 let task1 (program: Program) =
-    { 1 .. 100 }
-    |> Seq.fold (fun program i -> task1iter program) program
+    { 1 .. 37 }
+    |> Seq.fold (fun program i ->
+                                 printfn $"### ITER {i} ###"
+                                 task1iter program) program
 let program1 = task1 program
 
 printProgram program1
 
 
-let test1= narrowValues EQL ONE_AND_ZERO (CONST 0L) ONE_AND_ZERO
+let _123 = [1L;2L;3L] |> Set |> VALUES
+let _789 = [7L;8L;9L] |> Set |> VALUES
+
+let test1= narrowValues ADD _123 _789 NATURAL 
 printfn $"test1: {test1}"
 
 printfn $"eq {eqValue (CONST 0L) ONE_AND_ZERO} "
