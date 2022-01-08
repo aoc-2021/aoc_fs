@@ -12,15 +12,6 @@ type Reg =
 let ALL_REGS = [ W; X; Y; Z ]
 let otherRegs (reg: Reg) = ALL_REGS |> List.filter ((<>) reg)
 
-type Op =
-    | I_INP
-    | I_ADD
-    | I_MUL
-    | I_DIV
-    | I_MOD
-    | I_SET
-    | I_NOP
-    | I_EQL
 
 type Param =
     | R of Reg
@@ -33,13 +24,13 @@ let paramToString (param:Param) =
     | I i -> $"{i}"
     | NA -> ""
 
-type Instruction(op:Op,reg:Reg,param:Param) =
-    member this.Op = op
-    member this.Reg = reg
-    member this.Param = param
-    override this.ToString () =
-        $"{op} {reg} {param |> paramToString}"
-
+type Instruction =
+    | I_INP of Reg 
+    | I_ADD of Reg*Param 
+    | I_MUL of Reg*Param 
+    | I_DIV of Reg*int64 
+    | I_MOD of Reg*int64 
+    | I_EQL of Reg*Param 
 type Program = list<Instruction> 
 
 let printProgram (program:Program) =
@@ -67,12 +58,12 @@ let parseLine (line: string) : Instruction =
         | _ -> s |> int64 |> I
 
     match line with
-    | [| "add"; r; p |] -> Instruction(I_ADD,(r |> toReg),(p |> toParam))
-    | [| "mul"; r; p |] -> Instruction(I_MUL,(r |> toReg),(p |> toParam))
-    | [| "div"; r; p |] -> Instruction(I_DIV,(r |> toReg),(p |> toParam))
-    | [| "mod"; r; p |] -> Instruction(I_MOD,(r |> toReg),(p |> toParam))
-    | [| "eql"; r; p |] -> Instruction(I_EQL,(r |> toReg),(p |> toParam))
-    | [| "inp"; r |] -> Instruction(I_INP,(r |> toReg),NA)
+    | [| "add"; r; p |] -> I_ADD (r |> toReg,p |> toParam)
+    | [| "mul"; r; p |] -> I_MUL (r |> toReg,p |> toParam)
+    | [| "div"; r; p |] -> I_DIV (r |> toReg,p |> int64)
+    | [| "mod"; r; p |] -> I_MOD (r |> toReg,p |> int64)
+    | [| "eql"; r; p |] -> I_EQL (r |> toReg,p |> toParam)
+    | [| "inp"; r |] -> I_INP (r|> toReg)
 
 let program = file |> List.map parseLine
 
@@ -85,12 +76,47 @@ type Value =
     | DIV of Value
     | CONST of int64 
     
-type ALU(regs:Map<Reg,Value>) =
+type ALU(regs:Map<Reg,Value>,lastInput:int) =
     member this.Regs = regs
     member this.get (reg:Reg) = regs.TryFind reg |>Option.get
     member this.set (reg:Reg) (value:Value) =
-        regs.Add(reg,value) |> ALU
+        let regs = regs.Add(reg,value)
+        ALU(regs,lastInput)
+        
+    member this.exec (inst:Instruction) : ALU =
+        match inst with
+        | I_INP reg ->
+            let lastInput = lastInput + 1 
+            let regs = regs.Add(reg,(INPUT lastInput))
+            ALU(regs,lastInput)
+        | _ ->
+            printfn $"Not implemented : {inst}"
+            this 
 
-    static member init = [W;X;Y;Z] |> List.map (fun r -> (r,CONST 0L)) |> Map |> ALU 
+    override this.ToString() =
+        let rs = [W;X;Y;Z] |> List.map (fun r -> r,this.get r) |> List.map (fun (r,v) -> sprintf $"{r}={v}") |> String.concat " "
+        $"ALU {rs}"
+    
+    static member init =
+        let regs = [W;X;Y;Z] |> List.map (fun r -> (r,CONST 0L)) |> Map
+        ALU(regs,-1)
+    
 
-printProgram program 
+printProgram program
+
+// trying to solve yet again
+
+let rec solve (program:Program) =
+    let rec eval (alu:ALU) (program:Program) =
+        match program with
+        | [] -> alu
+        | inst::rest -> 
+            printfn $"ALU {alu}"
+            let alu = alu.exec inst
+            printfn $"ALU {alu}"
+            eval alu rest 
+        
+    let alu = ALU.init
+    eval alu program
+    
+solve program 
