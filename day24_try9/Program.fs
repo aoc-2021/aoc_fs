@@ -67,7 +67,6 @@ let parseLine (line: string) : Instruction =
 
 let program = file |> List.map parseLine
 
-
 type Value =
     | INPUT of int
     | SUM of Value*Value
@@ -89,9 +88,51 @@ type ALU(regs:Map<Reg,Value>,lastInput:int) =
             let lastInput = lastInput + 1 
             let regs = regs.Add(reg,(INPUT lastInput))
             ALU(regs,lastInput)
+        | I_ADD (reg,I i) ->
+            let value =
+                match this.get reg with
+                | CONST c -> CONST (c + i)
+                | value -> failwith $"Not implemented: {value} + {i}"
+            this.set reg value
+        | I_ADD (reg,R other) ->
+            let value = this.get reg 
+            let param = this.get other
+            let value =
+                match value,param with
+                | CONST a,CONST b -> CONST (a+b)
+                | _ -> failwith $"Not implemented: {value} + {param}"
+            this.set reg value
+        | I_MUL (reg,I i) ->
+            let value =
+                match this.get reg with
+                | CONST c -> CONST (c * i)
+                | value -> failwith $"Not implemented: {value} * {i}"
+            this.set reg value
+        | I_DIV (_,1L) -> this 
+        | I_MOD (reg,i) ->
+            let value =
+                match this.get reg with
+                | CONST c -> CONST (c % i)
+                | value -> failwith $"Not implemented: {value} %% {i}"
+            this.set reg value
+        | I_EQL(reg,I i) ->
+            let value = this.get reg
+            let value =
+                match value with
+                | CONST v when v = i -> CONST 1L
+                | CONST v when v <> i -> CONST 0L 
+                | _ -> failwith $"Not implemented {value} == {i}"
+            this.set reg value 
+        | I_EQL(reg,R r) ->
+            let value = this.get reg
+            let param = this.get r
+            let value =
+                match value,param with
+                | CONST i,INPUT _ when i < 1L || i > 9L -> CONST 0L 
+                | _ -> failwith $"Not implemented {value} == {param}"
+            this.set reg value 
         | _ ->
-            printfn $"Not implemented : {inst}"
-            this 
+            failwith $"Not implemented : {inst}"
 
     override this.ToString() =
         let rs = [W;X;Y;Z] |> List.map (fun r -> r,this.get r) |> List.map (fun (r,v) -> sprintf $"{r}={v}") |> String.concat " "
