@@ -61,7 +61,10 @@ let consolidate (value:Value) =
     | RANGE (a,b) when b-a < 10 -> [a..b] |> Set |> VALUES
     | RANGE _ -> value 
     | VALUES s when s.Count > 40 -> RANGE (s |> Set.toList |> List.min, s |> Set.toList |> List.max )
-    | VALUES _ -> value 
+    | VALUES _ -> value
+    | FROM 0L -> NATURAL
+    | FROM 1L -> POSITIVE
+    | FROM _ -> value 
     | _ -> failwith $"consolidate: not implemented: {value}"
 
 let canContain (value: Value) (i: int64) =
@@ -74,7 +77,8 @@ let canContain (value: Value) (i: int64) =
     | RANGE (a, b) -> i >= a && i <= b
     | VALUES s -> s.Contains i
     | TO upper -> i <= upper
-    | _ -> failwith $"Not implemented {value} {i}"
+    | FROM c -> i >= c
+    | _ -> failwith $"canContain: Not implemented {value} {i}"
 
 let rec intersection (value1: Value) (value2: Value) =
     let isPositive (i: int64) = i > 0L
@@ -110,6 +114,7 @@ let rec intersection (value1: Value) (value2: Value) =
     | NATURAL,FROM i when i > 0L -> value2
     | NATURAL,FROM i when i <= 0L -> NATURAL
     | FROM a,FROM b -> FROM (max a b)
+    | FROM from,RANGE (a,_) when a > from -> value2
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 
@@ -263,6 +268,10 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let param1 = pairs |> List.map fst |> Set |> VALUES
         let param2 = pairs |> List.map snd |> Set |> VALUES
         let result = pairs |> List.map (fun (a,b) -> a+b) |> Set |> VALUES // |> consolidate
+        ADD,param1,param2,result
+    | ADD,NATURAL,VALUES s1,NATURAL ->
+        let smallest = s1 |> Set.toList |> List.min
+        let result = if smallest = 0L then NATURAL else FROM smallest
         ADD,param1,param2,result
     | MUL,_,CONST 0L,_ ->
         MUL,param1,param2,(intersection (CONST 0L) result)
@@ -434,7 +443,7 @@ let task1iter (program: Program) =
     program
 
 let task1 (program: Program) =
-    { 1 .. 37 }
+    { 1 .. 100 }
     |> Seq.fold (fun program i ->
                                  printfn $"### ITER {i} ###"
                                  task1iter program) program
