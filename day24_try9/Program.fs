@@ -71,7 +71,7 @@ type Value =
     | INPUT of int
     | SUM of Value*Value
     | MUL of Value
-    | MOD of Value
+    | MOD of Value*int64 
     | DIV of Value
     | CONST of int64 
     
@@ -92,6 +92,7 @@ type ALU(regs:Map<Reg,Value>,lastInput:int) =
             let value =
                 match this.get reg with
                 | CONST c -> CONST (c + i)
+                | INPUT id when i > 0L -> SUM (INPUT id,CONST i)
                 | value -> failwith $"Not implemented: {value} + {i}"
             this.set reg value
         | I_ADD (reg,R other) ->
@@ -100,19 +101,32 @@ type ALU(regs:Map<Reg,Value>,lastInput:int) =
             let value =
                 match value,param with
                 | CONST a,CONST b -> CONST (a+b)
+                | CONST 0L,_ -> param
+                | INPUT _,CONST c when c > 0L -> SUM (value,param)
                 | _ -> failwith $"Not implemented: {value} + {param}"
             this.set reg value
+        | I_MUL (_,I 1L) -> this 
         | I_MUL (reg,I i) ->
             let value =
                 match this.get reg with
                 | CONST c -> CONST (c * i)
                 | value -> failwith $"Not implemented: {value} * {i}"
             this.set reg value
+        | I_MUL (reg,R other) when (this.get other) = CONST 1L -> this 
+        | I_MUL (reg,R other) -> 
+            let value = this.get reg 
+            let param = this.get other
+            let value =
+                match value,param with
+                | CONST a,CONST b -> CONST (a*b)
+                | _ -> failwith $"Not implemented: {value} * {param}"
+            this.set reg value
         | I_DIV (_,1L) -> this 
         | I_MOD (reg,i) ->
             let value =
                 match this.get reg with
                 | CONST c -> CONST (c % i)
+                | SUM (v1,v2) -> MOD (SUM(v1,v2),i) 
                 | value -> failwith $"Not implemented: {value} %% {i}"
             this.set reg value
         | I_EQL(reg,I i) ->
