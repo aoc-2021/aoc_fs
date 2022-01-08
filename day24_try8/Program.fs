@@ -62,6 +62,10 @@ let consolidate (value:Value) =
     | RANGE _ -> value
     | VALUES s when s.Count = 1 -> s |> Set.toList |> List.head |> CONST
     | VALUES s when s.Count > 40 -> RANGE (s |> Set.toList |> List.min, s |> Set.toList |> List.max )
+    | VALUES s when s.Count > 10
+                    && [s.MinimumElement..s.MaximumElement]
+                       |> List.map (s.Contains) |> List.contains false |> not ->
+        RANGE (s.MinimumElement,s.MaximumElement)
     | VALUES _ -> value
     | FROM 0L -> NATURAL
     | FROM 1L -> POSITIVE
@@ -88,18 +92,18 @@ let rec intersection (value1: Value) (value2: Value) =
     | UNKNOWN, _ -> value2
     | _, UNKNOWN -> value1
     | CONST c, _ when canContain value2 c -> CONST c
-    | CONST c, _ -> failwith $"Invalid intersection {value1} {value2}"
+    | CONST _, _ -> failwith $"Invalid intersection {value1} {value2}"
     | _, CONST _ -> intersection value2 value1
     | NATURAL, NATURAL -> NATURAL
     | _, NATURAL -> intersection value2 value1
     | NATURAL, VALUES vs -> vs |> Set.filter ((<) -1L) |> VALUES
-    | NATURAL, RANGE (a,b) when a >= 0L -> value2
-    | NATURAL, RANGE (a,b) when b < 0L -> failwith "$intersect NATURAL {value2} = Ø"
+    | NATURAL, RANGE (a,_) when a >= 0L -> value2
+    | NATURAL, RANGE (_,b) when b < 0L -> failwith "$intersect NATURAL {value2} = Ø"
     | NATURAL, RANGE (a,b) when a < 0L && b >= 0L -> RANGE (0L,b)
     | POSITIVE, POSITIVE -> POSITIVE
     | POSITIVE, NOT_ZERO -> POSITIVE
-    | POSITIVE, RANGE (a, b) when a > 0 -> value2
-    | POSITIVE, RANGE (a, b) when b > 0 -> RANGE(1L, b)
+    | POSITIVE, RANGE (a, _) when a > 0 -> value2
+    | POSITIVE, RANGE (_, b) when b > 0 -> RANGE(1L, b)
     | POSITIVE, VALUES s -> s |> Set.filter isPositive |> VALUES
     | NOT_ZERO, NOT_ZERO -> NOT_ZERO
     | NOT_ZERO, _ -> intersection value2 value1
@@ -214,7 +218,7 @@ let rec eqValue (value1: Value) (value2: Value) : Value =
               | VALUES s, CONST c when s.Contains c -> ONE_AND_ZERO
               | VALUES s1, VALUES s2 when Set.intersect s1 s2 |> Set.isEmpty |> not -> ONE_AND_ZERO
               | VALUES s1, VALUES s2 when Set.intersect s1 s2 |> Set.isEmpty -> CONST 0L
-              | _,VALUES s1 -> eqValue value2 value1
+              | _,VALUES _ -> eqValue value2 value1
               | VALUES s1,_ when s1 |> Set.exists (fun i -> canContain value2 i) -> ONE_AND_ZERO
               | VALUES s1,_ when s1 |> Set.filter(fun i -> canContain value2 i) |> Set.isEmpty -> CONST 0L 
               | _,_ -> failwith $"Not implemented EQ {value1} {value2}"
@@ -269,16 +273,35 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let pairs = pairs |> List.filter (fun (a,b) -> a+b |> (canContain result))
         let param1 = pairs |> List.map fst |> Set |> VALUES
         let param2 = pairs |> List.map snd |> Set |> VALUES
-        let result = pairs |> List.map (fun (a,b) -> a+b) |> Set |> VALUES // |> consolidate
+        let result = pairs |> List.map (fun (a,b) -> a+b) |> Set |> VALUES |> consolidate
         ADD,param1,param2,result
     | ADD,NATURAL,VALUES s1,NATURAL ->
         let smallest = s1 |> Set.toList |> List.min
         let result = if smallest = 0L then NATURAL else FROM smallest
         ADD,param1,param2,result
+    | ADD,NATURAL,VALUES s,RANGE(a,b) ->
+        let p1min = a - s.MaximumElement
+        let p1max = b - s.MinimumElement
+        let param1 = RANGE(p1min,p1max)
+        ADD,param1,param2,result 
     | ADD,RANGE(a,b), VALUES s,_ when s.MinimumElement > 0L && a > 0L ->
         let result = intersection (RANGE (a+s.MinimumElement, b+s.MaximumElement)) result
         // TODO : filter param1,param2 
         ADD,param1,param2,result
+    | ADD,RANGE(a,b),VALUES s2, VALUES _ when b-a < 50 ->
+        let pairs = List.allPairs [a..b] (s2 |> Set.toList)
+        let pairs = pairs |> List.filter (fun (a,b) -> a+b |> (canContain result))
+        let result = pairs |> List.map (fun (a,b) -> a+b) |> Set |> VALUES
+        let param1 = pairs |> List.map fst |> Set |> VALUES
+        let param2 = pairs |> List.map snd |> Set |> VALUES
+        ADD,param1,param2,result
+    | ADD,RANGE(a,b),VALUES s2,_ when b-a >= 50 -> 
+        let result = intersection (RANGE(a+s2.MinimumElement,b+s2.MaximumElement)) result
+        // todo: filter input
+        ADD,param1,param2,result 
+    | ADD,FROM from1,VALUES s2,_ ->
+        let result = intersection (FROM (from1+s2.MinimumElement)) result
+        ADD,param1,param2,result 
     | MUL,UNKNOWN,UNKNOWN,UNKNOWN -> MUL,UNKNOWN,UNKNOWN,UNKNOWN 
     | MUL,_,CONST 0L,_ ->
         MUL,param1,param2,(intersection (CONST 0L) result)
@@ -302,10 +325,10 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let param2 = pairs |> List.map snd |> Set |> VALUES
         let result = pairs |> List.map (fun (a,b) -> a*b) |> Set |> VALUES // |> consolidate
         MUL,param1,param2,result
-    | MUL,NATURAL,RANGE(a,b),_ when a >= 0 ->
+    | MUL,NATURAL,RANGE(a,_),_ when a >= 0 ->
         MUL,param1,param2,intersection result NATURAL
     | MUL,NATURAL,VALUES s1,_ ->
-        let isNatural = s1 |> Set.exists ((fun i -> i < 0L)) |> not
+        let isNatural = s1 |> Set.exists (fun i -> i < 0L) |> not
         let result = if isNatural then NATURAL else UNKNOWN
         MUL,param1,param2,result
     | MUL,RANGE(a,b),CONST c,_ when c > 0L ->
@@ -314,12 +337,25 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         MUL,param1,param2,result
     | MUL,FROM from,CONST c,_ when from > 0L && c > 0L ->
         let result = intersection (FROM (from*c)) result
+        MUL,param1,param2,result
+    | MUL,RANGE(a,b),VALUES s,_ when a>0L && s.MinimumElement > 0L && b-a>30 ->
+        let result = intersection (RANGE (a*s.MinimumElement,b*s.MaximumElement)) result
         MUL,param1,param2,result 
     | DIV,_,CONST 1L,_ ->
         let value = intersection param1 result
         DIV,value,param2,value
+    | DIV,_,CONST c,CONST r when c > 0L && r >= 0L ->
+        printfn $"***** DIV {param1} / {param2} = {result} :"
+        let param1 = intersection (RANGE(c*r,c*r+c-1L)) param1
+        printfn $"-> DIV,{param1},{param2},{result}"
+        DIV,param1,param2,result  
     | DIV,NATURAL,CONST c,_ when c > 0L ->
-        DIV,param1,param2,intersection result NATURAL 
+        printfn $"***** NARROW THIS **** / {param1} {param2} {result}"
+        DIV,param1,param2,intersection result NATURAL
+    | DIV,RANGE(a,b),CONST c,_ when c > 0L ->
+        let result = intersection (RANGE(a/c, b/c)) result
+        printfn $"***** NARROW THIS **** / {param1} {param2} {result}"
+        DIV,param1,param2,result 
     | MOD,CONST 0L,_,_ ->
         MOD,param1,param2,intersection (CONST 0L) result
     | MOD,VALUES v,CONST c,_ ->
@@ -329,9 +365,21 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
     | MOD,UNKNOWN,CONST c,_ ->
         let result = intersection (RANGE(0L,c-1L)) result
         MOD,NATURAL,param2,result  // TODO: narrow param1
+    | MOD,RANGE(a,b),CONST m,_ when b-a < 50 ->
+        let p1vals = [a..b] |> List.filter (fun i -> i % m |> (canContain result)) |> Set
+        let param1 = VALUES p1vals 
+        let newResult = p1vals |> Set.map (fun i -> i % m) |> VALUES
+        let result = intersection result newResult
+        MOD,param1,param2,result
+    | MOD,RANGE(a,b),CONST m,_ when b-a > m ->
+        let result = intersection (RANGE (0L,m-1L)) result
+        MOD,param1,param2,result 
     | EQL,_,_,CONST 1L ->
         let value = intersection param1 param2
-        EQL,value,value,result 
+        EQL,value,value,result
+    | EQL,VALUES s,CONST c,CONST 0L ->
+        let param1 = s.Remove(c) |> VALUES
+        EQL,param1,param2,result 
     | EQL,_,_,_ ->
         let result = intersection (eqValue param1 param2) result
         EQL,param1,param2,result  
@@ -377,13 +425,32 @@ type Step(op: Op, reg: Reg, param: Param, before: ALU, after: ALU) =
             let before, after = before.SyncValues(otherRegs reg) after
             Step(op, reg, NA, before, after)
 
+    member this.unsafeSimplified () : Step =
+        let v1 = before.get reg
+        let v2 = if param = NA then UNKNOWN else before.getValue param
+        let result = after.get reg
+        match op,v1,v2,result with
+        | ADD,CONST a,_,CONST b when a = b -> Step(NOP,reg,NA,before,after)
+        | ADD,_,_,CONST c -> Step(SET,reg,I c,before,after)
+        | MUL,CONST a,_,CONST b when a = b -> Step(NOP,reg,NA,before,after)
+        | MUL,_,CONST 1L,_ -> Step(NOP,reg,NA,before,after)
+        | MUL,_,CONST 0L,_ -> Step(SET,reg,I 0L,before,after)
+        | MUL,_,_,CONST c -> Step(SET,reg,I c,before,after)
+        | DIV,CONST 0L,_,_ -> Step(NOP,reg,NA,before,after)
+        | DIV,_,_,CONST c -> Step(SET,reg,I c,before,after)
+        | DIV,_,CONST 1L,_ -> Step(NOP,reg,NA,before,after)
+        | MOD,CONST a,CONST b,_ when a < b -> Step(NOP,reg,NA,before,after)
+        | MOD,_,_,CONST c -> Step(SET,reg,I c,before,after)
+        | EQL,_,_,CONST c -> Step(SET,reg,I c,before,after)
+        | _ -> this 
+            
     static member init (op: Op) (reg: Reg) (param: Param) =
         Step(op, reg, param, ALU.unknown, ALU.unknown)
 
     override this.ToString() =
         match op with
-        | NOP -> $"STEP: {op}        in={before} out={after}"
-        | _ -> $"STEP: {op} {reg} {param |> paramToString, 3}  in={before} out={after}"
+        | NOP -> $"STEP: {op}" //       ⟶ {after}" //       in={before} out={after}"
+        | _ -> $"STEP: {op} {reg} {param |> paramToString, 3} ⟶ out={after}"
 
 type Program = list<Step>
 
@@ -413,9 +480,10 @@ let parseLine (line: string) : Step =
     | [| "mod"; r; p |] -> Step.init MOD (r |> toReg) (p |> toParam)
     | [| "eql"; r; p |] -> Step.init EQL (r |> toReg) (p |> toParam)
     | [| "inp"; r |] -> Step.init INP (r |> toReg) NA
+    | _ -> failwith $"Unrecognized input: {line}"
 
 let readProgram (input: list<string>) : Program =
-    let first::rest = file |> List.map parseLine
+    let first::rest = input |> List.map parseLine
     (first.setBefore ALU.initial) :: rest
 
 let printProgram (program: Program) =
@@ -457,13 +525,19 @@ let task1iter (program: Program) =
     program
 
 let task1 (program: Program) =
-    { 1 .. 100 }
+    { 1 .. 300 }
     |> Seq.fold (fun program i ->
                                  printfn $"### ITER {i} ###"
                                  task1iter program) program
 let program1 = task1 program
 
 printProgram program1
+
+
+printfn "SIMPLIFIED ******** (UNSAFE)"
+
+let unsafeProgram = program1 |> List.map (fun step -> step.unsafeSimplified ())
+printProgram unsafeProgram 
 
 
 let _123 = [1L;2L;3L] |> Set |> VALUES
