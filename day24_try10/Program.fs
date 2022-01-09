@@ -18,7 +18,8 @@ type Value =
     | TO of int64
     | CONST of int64 
     | RANGE of int64*int64
-    | SEQUENCE of list<Value> 
+    | SEQUENCE of list<Value>
+    | EMPTY 
 
 let ALL_INPUTS = RANGE (1,9)
 let ONE_AND_ZERO = RANGE (0,1)
@@ -31,11 +32,16 @@ let rec valueToString (value: Value) =
     | TO c -> $"⟨∞,{c}]"
     | FROM c -> $"[{c},∞⟩"
     | SEQUENCE l -> l |> List.map valueToString |> String.concat "·" |> sprintf "【%s】"
+    | EMPTY -> "🤬"
+
+let toSequence (value:Value) =
+    match value with
+    | CONST c -> SEQUENCE [CONST c]
+    | RANGE(a,b) -> [a..b] |> List.map CONST |> SEQUENCE 
 
 let expand (value:Value) =
     match value with
     | _ -> value 
-
 let consolidate (value:Value) =
     match value with
     | UNKNOWN -> UNKNOWN
@@ -46,14 +52,35 @@ let consolidate (value:Value) =
 let canContain (value: Value) (i: int64) =
     match value with
     | UNKNOWN -> true
+    | RANGE(a,b) -> a <= i && b >= i 
     | _ -> failwith $"canContain: Not implemented {value} {i}"
 
-let rec intersection (value1: Value) (value2: Value) =
-    let isPositive (i: int64) = i > 0L
+let isOneAndZero (value:Value) =
+    canContain value 0L && canContain value 1L
 
+let toBoolean (value:Value) : Value =
+    match canContain value 0L,canContain value 1L with
+    | true,true -> ONE_AND_ZERO
+    | true,false -> CONST 0L
+    | false,true -> CONST 1L
+    | false,false -> EMPTY 
+
+let rec intersection (value1: Value) (value2: Value) : Value =
     match value1, value2 with
     | UNKNOWN, _ -> value2
     | _, UNKNOWN -> value1
+    | CONST a,CONST b when a = b -> CONST a
+    | CONST a,CONST b when a <> b -> EMPTY
+    | CONST c, RANGE (a,b) when c >= a && c <= b -> CONST c
+    | CONST c, RANGE (a,b) when c < a || c > b  -> EMPTY 
+    | RANGE (a,b),CONST c when c >= a && c <= b -> CONST c
+    | RANGE (a,b),CONST c when c < a || c > b -> EMPTY 
+    | RANGE (a,b),RANGE (c,d) ->
+        let first = max a c
+        let last = min b d
+        if first > last then EMPTY 
+        elif first = last then CONST first
+        else RANGE(first,last)
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 
@@ -145,10 +172,42 @@ let rec eqValue (value1: Value) (value2: Value) : Value =
     res 
 
 let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : Op * Value * Value * Value =
+    let skip = op,param1,param2,result 
     let param1 = consolidate param1
     let param2 = consolidate param2
     let result = consolidate result
-    match op,param1,param2,result with 
+    match op,param1,param2,result with
+    | ADD,UNKNOWN,UNKNOWN,_ -> skip
+    | ADD,UNKNOWN,_,UNKNOWN -> skip 
+    | ADD,_,UNKNOWN,UNKNOWN -> skip
+    | ADD,RANGE (a,b),CONST c,_ ->
+        let result = intersection (RANGE (a+c,b+c)) result
+        let param1 =
+            match result with
+            | CONST r -> CONST (r-c)
+            | RANGE (a,b) -> RANGE (a-c,b-c)
+            | _ -> failwith "Not implemented Add: {param1} {param2}"
+        // TODO: narrow param1
+        ADD,param1,param2,result
+    | ADD,CONST a,CONST b,_ -> ADD,param1,param2,intersection (CONST (a+b)) result
+    | DIV,UNKNOWN,_,UNKNOWN -> skip 
+    | DIV,_,CONST 1L,_ ->
+        let value = intersection param1 result
+        DIV,value,CONST 1L,value
+    | MUL,UNKNOWN,UNKNOWN,_ -> skip
+    | MUL,_,UNKNOWN,UNKNOWN -> skip 
+    | MUL,UNKNOWN,CONST 0L,UNKNOWN -> MUL,UNKNOWN,CONST 0L,CONST 0L 
+    | MUL,_,CONST 0L,_ -> MUL,param1,CONST 0L,CONST 0L
+    | MUL,CONST c,RANGE(a,b),_ when c > 1L ->
+        let result:Value = [a..b] |> List.map (((*) c) >> CONST) |> SEQUENCE |> intersection result
+        // TODO; filter param2
+        MUL,param1,param2,result 
+    | MOD,CONST 0L,CONST c,_ -> MOD,param1,param2,intersection result (CONST 0L)
+    | MOD,UNKNOWN,CONST c,_ -> MOD,param1,param2,intersection (RANGE (0L,c-1L)) result
+    | EQL,UNKNOWN,UNKNOWN,_ -> EQL,UNKNOWN,UNKNOWN,toBoolean result 
+    | EQL,UNKNOWN,_,UNKNOWN -> EQL,param1,param2,ONE_AND_ZERO
+    | EQL,_,_,_ when isOneAndZero result -> EQL,param1,param2,toBoolean result 
+     
     | _ ->
         printfn $"Not handled: {op} {param1 |> valueToString} {param2 |> valueToString} {result |> valueToString}"
         op, param1, param2, result
@@ -272,7 +331,7 @@ let task1iter (program: Program) =
     program
 
 let task1 (program: Program) =
-    { 1 .. 1 }
+    { 1 .. 5 }
     |> Seq.fold (fun program i ->
                                  printfn $"### ITER {i} ###"
                                  task1iter program) program
