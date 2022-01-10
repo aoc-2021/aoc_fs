@@ -58,13 +58,18 @@ let consolidate (value:Value) =
     | RANGE _ -> value
     | SEQUENCE [] -> EMPTY
     | SEQUENCE [v] -> v
-    | SEQUENCE list -> consSeqList list |> SEQUENCE 
+    | SEQUENCE list -> consSeqList list |> SEQUENCE
+    | FROM _ -> value 
+    | TO _ -> value  
     | _ -> failwith $"consolidate: not implemented: {value}"
 
-let canContain (value: Value) (i: int64) =
+let rec canContain (value: Value) (i: int64) =
     match value with
     | UNKNOWN -> true
-    | RANGE(a,b) -> a <= i && b >= i 
+    | RANGE(a,b) -> a <= i && b >= i
+    | FROM a -> a <= i
+    | TO a -> a >= i
+    | SEQUENCE l -> l |> List.exists (fun e -> canContain e i)
     | _ -> failwith $"canContain: Not implemented {value} {i}"
 
 let isOneAndZero (value:Value) =
@@ -84,7 +89,9 @@ let rec intersection (value1: Value) (value2: Value) : Value =
     | CONST a,CONST b when a = b -> CONST a
     | CONST a,CONST b when a <> b -> EMPTY
     | CONST c, RANGE (a,b) when c >= a && c <= b -> CONST c
-    | CONST c, RANGE (a,b) when c < a || c > b  -> EMPTY 
+    | CONST c, RANGE (a,b) when c < a || c > b  -> EMPTY
+    | CONST c, FROM a when a <= c -> CONST c
+    | CONST c, FROM a when a > c -> EMPTY 
     | RANGE (a,b),CONST c when c >= a && c <= b -> CONST c
     | RANGE (a,b),CONST c when c < a || c > b -> EMPTY 
     | RANGE (a,b),RANGE (c,d) ->
@@ -112,7 +119,8 @@ let rec intersection (value1: Value) (value2: Value) : Value =
             | RANGE (a,b)::rest1,CONST c::rest2 when c = b -> CONST c::(interSeq rest1 rest2)
             | RANGE (a,b)::rest1,CONST c::_ when c > b -> interSeq rest1 seq2
             | RANGE (a,b)::rest1,RANGE (c,d)::rest2 when a = c && b = d -> RANGE(a,b)::(interSeq rest1 rest2)
-        interSeq seq1 seq2 |> SEQUENCE  
+        interSeq seq1 seq2 |> SEQUENCE
+    | FROM a, FROM b -> FROM (max a b) 
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 
@@ -179,9 +187,11 @@ let paramToString (param: Param) =
     | I i -> i |> string
     | NA -> " "
 
-let addValue (value: Value) (i: int64) =
+let rec addValue (value: Value) (i: int64) =
     match value with
     | UNKNOWN -> UNKNOWN
+    | CONST c -> CONST (c + i) 
+    | SEQUENCE seq -> seq |> List.map (fun e -> addValue e i) |> SEQUENCE 
     | _ -> failwith $"Not implemented: + {value} {i}"
 
 let mulValue (value: Value) (i: int64) : Value =
@@ -203,15 +213,29 @@ let rec eqValue (value1: Value) (value2: Value) : Value =
     // printfn $"eqValue {value1} {value2} -> {res}"
     res 
 
+let rec minValue (value:Value) : int64 =
+    match value with
+    | CONST c -> c
+    | RANGE (a,_) -> a
+    | SEQUENCE (a::_) -> minValue a
+    | FROM a -> a
+    | _ -> failwith $"minValue: unsupported: {value}"
+
 let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : Op * Value * Value * Value =
-    let skip = op,param1,param2,result 
+    // printfn $"narrow {op} {param1 |> valueToString} {param2 |> valueToString} {result |> valueToString}"
+    printfn 
+    let skipSilent() =
+        op,param1,param2,result
     let param1 = consolidate param1
     let param2 = consolidate param2
     let result = consolidate result
     match op,param1,param2,result with
-    | ADD,UNKNOWN,UNKNOWN,_ -> skip
-    | ADD,UNKNOWN,_,UNKNOWN -> skip 
-    | ADD,_,UNKNOWN,UNKNOWN -> skip
+    | ADD,UNKNOWN,UNKNOWN,_ -> skipSilent ()
+    | ADD,UNKNOWN,_,UNKNOWN -> skipSilent () 
+    | ADD,_,UNKNOWN,UNKNOWN -> skipSilent ()
+    | ADD,CONST 0L,_,_ -> 
+        let value = intersection param2 result
+        ADD,param1,value,value
     | ADD,RANGE (a,b),CONST c,_ ->
         let result = intersection (RANGE (a+c,b+c)) result
         let param1 =
@@ -222,20 +246,38 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         // TODO: narrow param1
         ADD,param1,param2,result
     | ADD,CONST a,CONST b,_ -> ADD,param1,param2,intersection (CONST (a+b)) result
-    | DIV,UNKNOWN,_,UNKNOWN -> skip 
+    | ADD,SEQUENCE _,CONST i,_ ->
+        let result = intersection (addValue param1 i) result
+        let param1 = addValue result (-i)
+        ADD,param1,param2,result
+    | DIV,UNKNOWN,_,UNKNOWN -> skipSilent () 
     | DIV,_,CONST 1L,_ ->
         let value = intersection param1 result
         DIV,value,CONST 1L,value
-    | MUL,UNKNOWN,UNKNOWN,_ -> skip
-    | MUL,_,UNKNOWN,UNKNOWN -> skip 
-    | MUL,UNKNOWN,CONST 0L,UNKNOWN -> MUL,UNKNOWN,CONST 0L,CONST 0L 
+    | DIV,FROM a,CONST c,_ when a >= 0L && c > 0L ->
+        let result = intersection (FROM (a/c)) result
+        let param1 = FROM (minValue result * c)
+        DIV,param1,param2,result
+    | MUL,UNKNOWN,UNKNOWN,_ -> skipSilent ()
+    | MUL,_,UNKNOWN,UNKNOWN -> skipSilent ()
+    | MUL,UNKNOWN,CONST 0L,UNKNOWN -> MUL,UNKNOWN,CONST 0L,CONST 0L
+    | MUL,UNKNOWN,_,UNKNOWN -> skipSilent ()
     | MUL,_,CONST 0L,_ -> MUL,param1,CONST 0L,CONST 0L
+    | MUL,CONST 0L,_,_ ->
+        let result = intersection (CONST 0L) result
+        MUL,param1,param2,result
     | MUL,CONST c,RANGE(a,b),_ when c > 1L ->
         let result:Value = [a..b] |> List.map (((*) c) >> CONST) |> SEQUENCE |> intersection result
         // TODO; filter param2
+        MUL,param1,param2,result
+    | MUL,FROM 0L,_,_ when minValue param2 > 0L ->
+        let result = intersection (FROM 0L) result
+        let param1 = FROM (if canContain result 0L then 0L else 1L)
         MUL,param1,param2,result 
     | MOD,CONST 0L,CONST c,_ -> MOD,param1,param2,intersection result (CONST 0L)
+    | MOD,UNKNOWN,_,_ -> MOD,FROM 0L,param2,result 
     | MOD,UNKNOWN,CONST c,_ -> MOD,param1,param2,intersection (RANGE (0L,c-1L)) result
+    | MOD,FROM _,_,_ -> MOD,param1,param2,result 
     | EQL,UNKNOWN,UNKNOWN,_ -> EQL,UNKNOWN,UNKNOWN,toBoolean result 
     | EQL,UNKNOWN,_,UNKNOWN -> EQL,param1,param2,ONE_AND_ZERO
     | EQL,_,_,_ when isOneAndZero result -> EQL,param1,param2,toBoolean result 
@@ -363,7 +405,7 @@ let task1iter (program: Program) =
     program
 
 let task1 (program: Program) =
-    { 1 .. 5 }
+    { 1 .. 17 }
     |> Seq.fold (fun program i ->
                                  printfn $"### ITER {i} ###"
                                  task1iter program) program
