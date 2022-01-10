@@ -43,10 +43,22 @@ let expand (value:Value) =
     match value with
     | _ -> value 
 let consolidate (value:Value) =
+    let rec consSeqList (values: list<Value>) =
+        match values with
+        | [] -> []
+        | [_] -> values
+        | CONST a::CONST b::rest when a + 1L = b -> consSeqList (RANGE (a,b)::rest)
+        | CONST c::RANGE(a,b)::rest when c+1L = a -> consSeqList (RANGE (c,b)::rest)
+        | RANGE (a,b)::CONST c::rest when b+1L = c -> consSeqList (RANGE (a,c)::rest)
+        | RANGE (a,b)::RANGE(c,d)::rest when b + 1L = c -> consSeqList (RANGE (a,d)::rest)
+        | a::rest -> a::(consSeqList rest)
     match value with
     | UNKNOWN -> UNKNOWN
     | CONST _ -> value
-    | RANGE _ -> value 
+    | RANGE _ -> value
+    | SEQUENCE [] -> EMPTY
+    | SEQUENCE [v] -> v
+    | SEQUENCE list -> consSeqList list |> SEQUENCE 
     | _ -> failwith $"consolidate: not implemented: {value}"
 
 let canContain (value: Value) (i: int64) =
@@ -81,6 +93,26 @@ let rec intersection (value1: Value) (value2: Value) : Value =
         if first > last then EMPTY 
         elif first = last then CONST first
         else RANGE(first,last)
+    | SEQUENCE seq1,SEQUENCE seq2 ->
+        let rec interSeq (seq1:list<Value>) (seq2:list<Value>) =
+            match seq1,seq2 with
+            | [],_ -> []
+            | _,[] -> []
+            | RANGE(a,b)::rest1,_ when a = b -> interSeq ((CONST a)::rest1) seq2
+            | _,RANGE(a,b)::rest2 when a = b -> interSeq seq1 ((CONST a)::rest2)
+            | CONST a::rest1,CONST b::_ when a < b -> interSeq rest1 (seq2)
+            | CONST a::_,CONST b::rest2 when a > b -> interSeq seq1 rest2
+            | CONST a::rest1,CONST b::rest2 when a = b -> CONST a :: (interSeq rest1 rest2)
+            | CONST c::rest1,RANGE(a,b)::_ when c < a -> interSeq rest1 seq2
+            | CONST c::rest1,RANGE(a,b)::rest2 when c >= a && c < b -> CONST c :: (interSeq rest1 (RANGE (c+1L,b)::rest2))
+            | CONST c::rest1,RANGE(a,b)::rest2 when c = b -> CONST c :: (interSeq rest1 rest2)
+            | CONST c::_,RANGE(a,b)::rest2 when b < c -> interSeq seq1 rest2
+            | RANGE (a,b)::_,CONST c::rest2 when c < a -> interSeq seq1 rest2
+            | RANGE (a,b)::rest1,CONST c::rest2 when c >= a && c < b -> CONST c :: (interSeq (RANGE ((c+1L),b)::rest1) rest2)
+            | RANGE (a,b)::rest1,CONST c::rest2 when c = b -> CONST c::(interSeq rest1 rest2)
+            | RANGE (a,b)::rest1,CONST c::_ when c > b -> interSeq rest1 seq2
+            | RANGE (a,b)::rest1,RANGE (c,d)::rest2 when a = c && b = d -> RANGE(a,b)::(interSeq rest1 rest2)
+        interSeq seq1 seq2 |> SEQUENCE  
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 
