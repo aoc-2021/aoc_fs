@@ -40,6 +40,13 @@ let toSequence (value:Value) =
     | RANGE(a,b) -> [a..b] |> List.map CONST |> SEQUENCE
     | _ -> failwith $"Not implemented: toSequence {value}"
 
+let rec valueToSet (value:Value) =
+    match value with
+    | CONST c -> Set.singleton c
+    | RANGE (a,b) -> [a..b] |> Set
+    | SEQUENCE list -> list |> List.map valueToSet |> Set.unionMany 
+
+
 let expand (value:Value) =
     match value with
     | _ -> value 
@@ -236,10 +243,6 @@ let rec eqValue (value1: Value) (value2: Value) : Value =
     // printfn $"eqValue {value1} {value2} -> {res}"
     res
 let expandSequence (value:Value) =
-    let valueToSet (value:Value) =
-        match value with
-        | CONST c -> Set.singleton c
-        | RANGE (a,b) -> [a..b] |> Set 
     match value with
     | SEQUENCE list ->
         list |> List.map valueToSet |> Set.unionMany |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE 
@@ -252,11 +255,19 @@ let rec modValue (value:Value) (i:int64): Value =
     | RANGE (a,b) when a >= 0L && b < i -> value 
     | SEQUENCE l ->
         l |> List.map (fun e -> modValue e i)
-          |> SEQUENCE |> expandSequence
+          |> SEQUENCE |> expandSequence |> consolidate
     | FROM _ -> RANGE (0,i-1L)
     | TO _ -> RANGE (0,i-1L)
     | _ -> failwith $"Not implemented: modValue {value} {i}"
 
+let rec rmValue (value:Value) (exclude:Value) =
+    match value,exclude with
+    | CONST c ,_ when canContain exclude c -> EMPTY
+    | CONST c ,_ when not (canContain exclude c) -> CONST c 
+    | RANGE(a,b),CONST c when a = c -> RANGE (a+1L,b)
+    | RANGE(a,b),CONST c when b = c -> RANGE (a,b-1L)
+    | RANGE(a,b),CONST c when c < a || c > b -> value
+    | _ -> failwith $"Not implemented rmValue {value} {exclude}"
 let rec minValue (value:Value) : int64 =
     match value with
     | CONST c -> c
@@ -349,7 +360,16 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let param1 = pairs |> List.map fst |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
         let param2 = pairs |> List.map snd |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
         let result = pairs |> List.map (fun (a,b) -> a*b) |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
-        MUL,param1,param2,result  // no need to intersect with result, already checked 
+        MUL,param1,param2,result  // no need to intersect with result, already checked
+    | MUL,SEQUENCE _,SEQUENCE _,_ ->
+        let s1 = param1 |> valueToSet |> Set.toList
+        let s2 = param2 |> valueToSet |> Set.toList
+        let pairs = List.allPairs s1 s2 |> List.filter (fun (a,b) -> canContain result (a*b))
+        let param1 = pairs |> List.map fst |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
+        let param2 = pairs |> List.map snd |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
+        let result = pairs |> List.map (fun (a,b) -> a*b) |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
+        MUL,param1,param2,result
+        
     | MOD,CONST 0L,CONST _,_ -> MOD,param1,param2,intersection result (CONST 0L)
     | MOD,UNKNOWN,_,_ -> MOD,FROM 0L,param2,result 
     | MOD,UNKNOWN,CONST c,_ -> MOD,param1,param2,intersection (RANGE (0L,c-1L)) result
@@ -360,6 +380,9 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         MOD,param1,param2,result
     | EQL,UNKNOWN,UNKNOWN,_ -> EQL,UNKNOWN,UNKNOWN,toBoolean result 
     | EQL,UNKNOWN,_,UNKNOWN -> EQL,param1,param2,ONE_AND_ZERO
+    | EQL,_,_,CONST 0L ->
+        let param1 = rmValue param1 param2
+        EQL,param1,param2,result 
     | EQL,_,_,_ when isOneAndZero result -> EQL,param1,param2,toBoolean result 
      
     | _ ->
