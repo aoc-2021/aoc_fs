@@ -66,6 +66,7 @@ let consolidate (value:Value) =
 let rec canContain (value: Value) (i: int64) =
     match value with
     | UNKNOWN -> true
+    | CONST c -> c = i 
     | RANGE(a,b) -> a <= i && b >= i
     | FROM a -> a <= i
     | TO a -> a >= i
@@ -91,7 +92,10 @@ let rec intersection (value1: Value) (value2: Value) : Value =
     | CONST c, RANGE (a,b) when c >= a && c <= b -> CONST c
     | CONST c, RANGE (a,b) when c < a || c > b  -> EMPTY
     | CONST c, FROM a when a <= c -> CONST c
-    | CONST c, FROM a when a > c -> EMPTY 
+    | CONST c, FROM a when a > c -> EMPTY
+    | CONST c, TO a when a >= c -> CONST c
+    | CONST c, TO a when a < c -> EMPTY
+    | CONST c, SEQUENCE _ -> if canContain value2 c then CONST c else EMPTY 
     | RANGE (a,b),CONST c when c >= a && c <= b -> CONST c
     | RANGE (a,b),CONST c when c < a || c > b -> EMPTY 
     | RANGE (a,b),RANGE (c,d) ->
@@ -100,6 +104,15 @@ let rec intersection (value1: Value) (value2: Value) : Value =
         if first > last then EMPTY 
         elif first = last then CONST first
         else RANGE(first,last)
+    | RANGE (a,_),TO c when c < a -> EMPTY
+    | RANGE (_,b),TO c when c >= b -> value1 
+    | RANGE (a,_),TO c when c = a -> CONST a
+    | RANGE (a,b),TO c when c > a && c < b -> RANGE (a,c)
+    | RANGE (_,b),FROM c when c > b -> EMPTY
+    | RANGE (a,_),FROM c when c <= a -> value1
+    | RANGE (_,b),FROM c when c = b -> CONST c
+    | RANGE (a,b),FROM c when c > a && c < b -> RANGE (c,b)
+    | SEQUENCE _, CONST c -> if canContain value1 c then CONST c else EMPTY 
     | SEQUENCE seq1,SEQUENCE seq2 ->
         let rec interSeq (seq1:list<Value>) (seq2:list<Value>) =
             match seq1,seq2 with
@@ -110,17 +123,23 @@ let rec intersection (value1: Value) (value2: Value) : Value =
             | CONST a::rest1,CONST b::_ when a < b -> interSeq rest1 (seq2)
             | CONST a::_,CONST b::rest2 when a > b -> interSeq seq1 rest2
             | CONST a::rest1,CONST b::rest2 when a = b -> CONST a :: (interSeq rest1 rest2)
-            | CONST c::rest1,RANGE(a,b)::_ when c < a -> interSeq rest1 seq2
+            | CONST c::rest1,RANGE(a,_)::_ when c < a -> interSeq rest1 seq2
             | CONST c::rest1,RANGE(a,b)::rest2 when c >= a && c < b -> CONST c :: (interSeq rest1 (RANGE (c+1L,b)::rest2))
-            | CONST c::rest1,RANGE(a,b)::rest2 when c = b -> CONST c :: (interSeq rest1 rest2)
-            | CONST c::_,RANGE(a,b)::rest2 when b < c -> interSeq seq1 rest2
-            | RANGE (a,b)::_,CONST c::rest2 when c < a -> interSeq seq1 rest2
+            | CONST c::rest1,RANGE(_,b)::rest2 when c = b -> CONST c :: (interSeq rest1 rest2)
+            | CONST c::_,RANGE(_,b)::rest2 when b < c -> interSeq seq1 rest2
+            | RANGE (a,_)::_,CONST c::rest2 when c < a -> interSeq seq1 rest2
             | RANGE (a,b)::rest1,CONST c::rest2 when c >= a && c < b -> CONST c :: (interSeq (RANGE ((c+1L),b)::rest1) rest2)
-            | RANGE (a,b)::rest1,CONST c::rest2 when c = b -> CONST c::(interSeq rest1 rest2)
-            | RANGE (a,b)::rest1,CONST c::_ when c > b -> interSeq rest1 seq2
+            | RANGE (_,b)::rest1,CONST c::rest2 when c = b -> CONST c::(interSeq rest1 rest2)
+            | RANGE (_,b)::rest1,CONST c::_ when c > b -> interSeq rest1 seq2
             | RANGE (a,b)::rest1,RANGE (c,d)::rest2 when a = c && b = d -> RANGE(a,b)::(interSeq rest1 rest2)
         interSeq seq1 seq2 |> SEQUENCE
-    | FROM a, FROM b -> FROM (max a b) 
+    | SEQUENCE _, RANGE _ -> intersection value1 (SEQUENCE [value2]) // ensure that there's no consolidates here
+    | SEQUENCE list,TO c ->
+        list |> List.map (fun e -> intersection e (TO c)) |> List.filter ((<>) EMPTY) |> SEQUENCE
+    | SEQUENCE list,FROM c ->
+        list |> List.map (fun e -> intersection e (FROM c)) |> List.filter ((<>) EMPTY) |> SEQUENCE
+    | RANGE _, SEQUENCE _ -> intersection (SEQUENCE [value1]) value2 
+    | FROM a, FROM b -> FROM (max a b)
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 
@@ -250,6 +269,10 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
         let result = intersection (addValue param1 i) result
         let param1 = addValue result (-i)
         ADD,param1,param2,result
+    | ADD,FROM _,UNKNOWN,FROM _ -> skipSilent ()
+    | ADD,FROM a,UNKNOWN,CONST c ->
+        let param2 = TO (c-a)
+        ADD,param1,param2,result
     | DIV,UNKNOWN,_,UNKNOWN -> skipSilent () 
     | DIV,_,CONST 1L,_ ->
         let value = intersection param1 result
@@ -273,7 +296,14 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
     | MUL,FROM 0L,_,_ when minValue param2 > 0L ->
         let result = intersection (FROM 0L) result
         let param1 = FROM (if canContain result 0L then 0L else 1L)
-        MUL,param1,param2,result 
+        MUL,param1,param2,result
+    | MUL,RANGE(a,b),RANGE(c,d),_ ->
+        let pairs = List.allPairs [a..b] [c..d]
+                    |> List.filter (fun (a,b) -> canContain result (a*b))
+        let param1 = pairs |> List.map fst |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
+        let param2 = pairs |> List.map snd |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
+        let result = pairs |> List.map (fun (a,b) -> a*b) |> Set |> Set.toList |> List.sort |> List.map CONST |> SEQUENCE |> consolidate
+        MUL,param1,param2,result  // no need to intersect with result, already checked 
     | MOD,CONST 0L,CONST c,_ -> MOD,param1,param2,intersection result (CONST 0L)
     | MOD,UNKNOWN,_,_ -> MOD,FROM 0L,param2,result 
     | MOD,UNKNOWN,CONST c,_ -> MOD,param1,param2,intersection (RANGE (0L,c-1L)) result
@@ -405,7 +435,7 @@ let task1iter (program: Program) =
     program
 
 let task1 (program: Program) =
-    { 1 .. 17 }
+    { 1 .. 18 }
     |> Seq.fold (fun program i ->
                                  printfn $"### ITER {i} ###"
                                  task1iter program) program
