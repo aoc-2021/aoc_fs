@@ -30,24 +30,15 @@ let rec valueToString (value: Value) =
     | TO c -> $"⟨∞,{c}]"
     | FROM c -> $"[{c},∞⟩"
     | EMPTY -> "🤬"
+    | VALUES v -> $"{{{v.MinimumElement}..{v.MaximumElement}}}"
 
-let expand (value:Value) =
-    match value with
-    | _ -> value 
-let consolidate (value:Value) =
-    match value with
-    | UNKNOWN -> UNKNOWN
-    | CONST _ -> value
-    | FROM _ -> value 
-    | TO _ -> value  
-    | _ -> failwith $"consolidate: not implemented: {value}"
-
-let rec canContain (value: Value) (i: int64) =
+let canContain (value: Value) (i: int64) =
     match value with
     | UNKNOWN -> true
     | CONST c -> c = i 
     | FROM a -> a <= i
     | TO a -> a >= i
+    | VALUES s -> s.Contains i 
     | _ -> failwith $"canContain: Not implemented {value} {i}"
 
 let isOneAndZero (value:Value) =
@@ -60,7 +51,7 @@ let toBoolean (value:Value) : Value =
     | false,true -> CONST 1L
     | false,false -> EMPTY 
 
-let rec intersection (value1: Value) (value2: Value) : Value =
+let intersection (value1: Value) (value2: Value) : Value =
     // printfn $"intersection {value1} {value2}"
     match value1, value2 with
     | UNKNOWN, _ -> value2
@@ -71,8 +62,14 @@ let rec intersection (value1: Value) (value2: Value) : Value =
     | CONST c, FROM a when a > c -> EMPTY
     | CONST c, TO a when a >= c -> CONST c
     | CONST c, TO a when a < c -> EMPTY
+    | CONST c, VALUES s -> if s.Contains c then CONST c else EMPTY 
     | FROM a, FROM b -> FROM (max a b)
-    | FROM a, CONST c -> if a <= c then CONST c else EMPTY 
+    | FROM a, CONST c -> if a <= c then CONST c else EMPTY
+    | TO a, TO b -> TO (min a b)
+    | VALUES s1,CONST c2 -> if s1.Contains c2 then CONST c2 else EMPTY 
+    | VALUES s1,VALUES s2 -> VALUES (Set.intersect s1 s2)
+    | VALUES s1,TO c2 -> s1 |> Set.filter (fun i -> i <= c2) |> VALUES
+    | VALUES s1,FROM c2 -> s1 |> Set.filter (fun i -> i >= c2) |> VALUES 
     | _ -> failwith $"intersection: Not implemented: {value1} {value2}"
 
 type Op =
@@ -145,8 +142,10 @@ let rec addValue (value: Value) (i: int64) =
     | _ -> failwith $"Not implemented: + {value} {i}"
 
 let mulValue (value: Value) (i: int64) : Value =
-    match value with 
-    _ -> failwith $"Not implemented * {value} {i}"
+    match value with
+    | CONST c -> CONST (c*i)
+    | VALUES s -> VALUES (s |> Set.map ((*) i))
+    | _ -> failwith $"Not implemented * {value} {i}"
 let divValue (value: Value) (i: int64) : Value =
     match value with 
     _ -> failwith $"Not implemented / {value} {i}"
@@ -180,15 +179,13 @@ let rec minValue (value:Value) : int64 =
     match value with
     | CONST c -> c
     | FROM a -> a
+    | VALUES s -> s.MinimumElement
     | _ -> failwith $"minValue: unsupported: {value}"
 
 let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : Op * Value * Value * Value =
     // printfn $"narrow {op} {param1 |> valueToString} {param2 |> valueToString} {result |> valueToString}"
     let skipSilent() =
         op,param1,param2,result
-    let param1 = consolidate param1
-    let param2 = consolidate param2
-    let result = consolidate result
     match op,param1,param2,result with
     | ADD,UNKNOWN,UNKNOWN,_ -> skipSilent ()
     | ADD,UNKNOWN,_,UNKNOWN -> skipSilent () 
@@ -204,6 +201,10 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
     | ADD,FROM a,UNKNOWN,CONST c ->
         let param2 = TO (c-a)
         ADD,param1,param2,result
+    | ADD,VALUES s1,CONST c2,_ ->
+        let result = intersection (s1 |> Set.map ((+)c2) |> VALUES) result
+        let param1 = intersection (s1 |> Set.filter (fun i -> canContain result (i+c2)) |> VALUES) param1
+        ADD,param1,param2,result 
     | DIV,UNKNOWN,_,UNKNOWN -> skipSilent () 
     | DIV,_,CONST 1L,_ ->
         let value = intersection param1 result
@@ -220,13 +221,31 @@ let rec narrowValues (op: Op) (param1: Value) (param2: Value) (result: Value) : 
     | MUL,CONST 0L,_,_ ->
         let result = intersection (CONST 0L) result
         MUL,param1,param2,result
+    | MUL,CONST c1,VALUES s2,_ ->
+        let param2 = s2 |> Set.filter (fun i -> canContain result (i * c1)) |> VALUES
+        let result = mulValue param2 c1
+        MUL,param1,param2,result
     | MUL,FROM 0L,_,_ when minValue param2 > 0L ->
         let result = intersection (FROM 0L) result
         let param1 = FROM (if canContain result 0L then 0L else 1L)
         MUL,param1,param2,result
-        
+    | MUL,VALUES s1,CONST c2,_ ->
+        let param1 = s1 |> Set.filter (fun i -> canContain result (i * c2)) |> VALUES
+        let result = mulValue param1 c2
+        MUL,param1,param2,result
+    | MUL,VALUES s1,VALUES s2,_ ->
+        let pairs = List.allPairs (s1 |> Set.toList) (s2 |> Set.toList)
+                    |> List.filter (fun (a,b) -> canContain result (a*b))
+        let param1 = pairs |> List.map fst |> Set |> VALUES
+        let param2 = pairs |> List.map snd |> Set |> VALUES
+        let result = pairs |> List.map (fun (a,b) -> a*b) |> Set |> VALUES
+        MUL,param1,param2,result
     | MOD,CONST 0L,CONST _,_ -> MOD,param1,param2,intersection result (CONST 0L)
-    | MOD,UNKNOWN,_,_ -> MOD,FROM 0L,param2,result 
+    | MOD,UNKNOWN,_,_ -> MOD,FROM 0L,param2,result
+    | MOD,FROM _,CONST i,_ ->
+        let result = intersection ([0L..i-1L] |> Set |> VALUES) result
+        let param1 = intersection (FROM (minValue result)) param1
+        MOD,param1,param2,result
     | EQL,UNKNOWN,UNKNOWN,_ -> EQL,UNKNOWN,UNKNOWN,toBoolean result 
     | EQL,UNKNOWN,_,UNKNOWN -> EQL,param1,param2,ONE_AND_ZERO
     | EQL,_,_,CONST 0L ->
