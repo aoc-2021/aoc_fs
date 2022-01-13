@@ -11,6 +11,29 @@ type Reg =
 type Sources(inputs: List<Map<int, Set<int64>>>) =
     member this.Inputs = inputs
 
+    member this.IntersectWith (other:Sources) =
+        let intersect (map1:Map<int,Set<int64>>,map2:Map<int,Set<int64>>) : Option<Map<int,Set<int64>>> =
+                let keys1 = map1.Keys |> Set
+                let keys2 = map2.Keys |> Set
+                let shared = Set.intersect keys1 keys2
+                let keys1:Set<int> = keys1 |> Set.filter (shared.Contains >> not)
+                let keys2:Set<int> = keys2 |> Set.filter (shared.Contains >> not)
+                let shared = shared |> Set.map (fun i -> i, map1.TryFind i |> Option.get, map2.TryFind i |> Option.get)
+                let shared = shared |> Set.map (fun (i,set1,set2) -> i,Set.intersect set1 set2)
+                if shared
+                   |> Set.filter (fun (i,deps) -> deps = Set.empty)
+                   |> Set.isEmpty |> not
+                then None
+                else
+                    let shared = shared |> Set.toList 
+                    let deps1 = keys1 |> Set.map (fun i -> i,map1.TryFind i |> Option.get) |> Set.toList 
+                    let deps2 = keys1 |> Set.map (fun i -> i,map2.TryFind i |> Option.get) |> Set.toList 
+                    let allDeps = List.concat [shared;deps1;deps2] |> Map 
+                    Some(allDeps) 
+        let pairs = List.allPairs inputs other.Inputs
+        pairs |> List.map intersect |> List.filter Option.isSome |> List.map Option.get 
+        
+    
     override this.ToString() =
         let inputsToString (is: Set<int64>) =
             is
@@ -67,7 +90,11 @@ type SourcedValue(vals: Set<SourcedNumber>) =
         |> List.map input
         |> Set
         |> SourcedValue
-
+    
+    member this.intersectWithConst (num:SourcedNumber)  =
+        let vals = vals |> Set.filter (fun sn -> sn.Value = num.Value)
+        
+     
     static member ofInts(inputs: List<int>) =
         inputs
         |> Set
@@ -136,6 +163,7 @@ let intersect (a: Value) (b: Value) =
     match a, b with
     | UNKNOWN, _ -> b
     | _, UNKNOWN -> a
+    | VALUES values, CONST c ->
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
