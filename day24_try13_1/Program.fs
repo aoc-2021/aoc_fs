@@ -11,7 +11,10 @@ type Reg =
 type Sources(inputs: List<Map<int, Set<int64>>>) =
     member this.Inputs = inputs
 
-    member this.IntersectWith (other:Sources) =
+    member this.IntersectWith (other:Sources) : Option<Sources> =
+        if this.Inputs.IsEmpty then Some(other)
+        elif other.Inputs.IsEmpty then Some(this) 
+        else 
         let intersect (map1:Map<int,Set<int64>>,map2:Map<int,Set<int64>>) : Option<Map<int,Set<int64>>> =
                 let keys1 = map1.Keys |> Set
                 let keys2 = map2.Keys |> Set
@@ -27,11 +30,14 @@ type Sources(inputs: List<Map<int, Set<int64>>>) =
                 else
                     let shared = shared |> Set.toList 
                     let deps1 = keys1 |> Set.map (fun i -> i,map1.TryFind i |> Option.get) |> Set.toList 
-                    let deps2 = keys1 |> Set.map (fun i -> i,map2.TryFind i |> Option.get) |> Set.toList 
+                    let deps2 = keys2 |> Set.map (fun i -> i,map2.TryFind i |> Option.get) |> Set.toList 
                     let allDeps = List.concat [shared;deps1;deps2] |> Map 
                     Some(allDeps) 
         let pairs = List.allPairs inputs other.Inputs
-        pairs |> List.map intersect |> List.filter Option.isSome |> List.map Option.get 
+        let deps  = pairs |> List.map intersect
+                    |> List.filter Option.isSome
+                    |> List.map Option.get
+        if deps.IsEmpty then None else Some(Sources(deps))
         
     
     override this.ToString() =
@@ -51,6 +57,10 @@ type Sources(inputs: List<Map<int, Set<int64>>>) =
                 |> List.map pairToString
                 |> String.concat ",")
         |> String.concat ";"
+
+let src1 = Sources([[(1,[5L;6L;4L] |> Set)] |>Map])
+let src2 = Sources([[(1,[1L;2L;3L] |>Set);(2,Set.singleton 2L)] |>Map])
+printfn $"XXXX {src1.IntersectWith src2}"
 
 type SourcedNumber(value: int64, sources: Sources) =
     interface System.IComparable with
@@ -93,7 +103,7 @@ type SourcedValue(vals: Set<SourcedNumber>) =
     
     member this.intersectWithConst (num:SourcedNumber)  =
         let vals = vals |> Set.filter (fun sn -> sn.Value = num.Value)
-        
+        1
      
     static member ofInts(inputs: List<int>) =
         inputs
@@ -163,7 +173,6 @@ let intersect (a: Value) (b: Value) =
     match a, b with
     | UNKNOWN, _ -> b
     | _, UNKNOWN -> a
-    | VALUES values, CONST c ->
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
