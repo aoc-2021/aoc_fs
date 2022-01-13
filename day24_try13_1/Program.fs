@@ -8,16 +8,16 @@ type Reg =
     | Y
     | Z
 
-type Value =
+type Param =
     | R of Reg
     | I of int64 
 type Inst =
     | INP of int*Reg
-    | ADD of Reg*Value
-    | MUL of Reg*Value
+    | ADD of Reg*Param
+    | MUL of Reg*Param
     | DIV of Reg*int64
     | MOD of Reg*int64
-    | EQL of Reg*Value
+    | EQL of Reg*Param
     | SET of Reg*int64
     | NOP 
 
@@ -60,3 +60,34 @@ let readProgram (file:string) =
     parse input 0    
      
 readProgram "input.txt" |> List.map (printfn "%A")
+
+type Sources(inputs:Map<int,Set<int64>>) =
+    member this.Inputs = inputs
+    override this.ToString() = "TODO"
+
+type Number (value:int64,sources:Sources)  =
+    interface System.IComparable with
+        override this.CompareTo(other) =
+            match other with 
+            | :? Number as other ->
+                if value > other.Value then 1
+                else if value < other.Value then -1
+                else 0
+            | _ -> 1
+    override this.ToString () = $"'{value}"
+                
+    member this.Value = value 
+    member this.Sources = sources
+
+type Value(vals:Set<Number>) =
+    member this.Vals = vals 
+
+    static member Input (id:int) = 
+        let input (i:int) = Number(i|>int64,Sources([(id,[i|>int64]|>Set)] |> Map))
+        [1..9] |> List.map input  |> Set |> Value
+    
+    override this.ToString () =
+        vals |> Set.map (sprintf "%A") |> String.concat " "
+
+Value.Input 1 |> (printfn "%A")
+    
