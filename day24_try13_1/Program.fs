@@ -17,7 +17,9 @@ type Inst =
     | MUL of Reg*Value
     | DIV of Reg*int64
     | MOD of Reg*int64
-    | EQL of Reg*Value 
+    | EQL of Reg*Value
+    | SET of Reg*int64
+    | NOP 
 
 let readProgram (file:string) =
     let input = File.ReadAllLines file
@@ -38,12 +40,16 @@ let readProgram (file:string) =
             | "z" -> R Z
             | _ -> int64 s |> I 
         match line with
+        | [|"add";_;"0"|]     -> inputNo,NOP 
         | [|"add";reg;value|] -> inputNo,ADD (toReg reg,toValue value)
+        | [|"mul";reg;"0"|]   -> inputNo,SET ((toReg reg),0L)
+        | [|"mul";_;"1"|]   -> inputNo,NOP
         | [|"mul";reg;value|] -> inputNo,MUL (toReg reg,toValue value)
+        | [|"div";_;"1"|] -> inputNo,NOP
         | [|"div";reg;value|] -> inputNo,DIV (toReg reg,int64 value)
         | [|"mod";reg;value|] -> inputNo,MOD (toReg reg,int64 value)
         | [|"eql";reg;value|] -> inputNo,EQL (toReg reg,toValue value)
-        | [|"inp";reg|] -> inputNo+1,INP (inputNo,toReg reg)
+        | [|"inp";reg|]       -> inputNo+1,INP (inputNo,toReg reg)
     let rec parse (lines:list<string[]>) (inputNo:int) =
         printfn $"parse {lines} {inputNo}" 
         match lines with
