@@ -129,7 +129,7 @@ let inst2String (inst: Inst) =
     | DIV (r, value) -> $"{r} := {r} / {value}"
     | MOD (r, value) -> $"{r} := {r} %% {value}"
     | EQL (r, value) -> $"{r} := {r} = {value |> value2String}"
-    | SET (r, value) -> $"{r} := {value}"
+    | SET (r, value) -> $"{r} := {value |> value2String}"
     | NOP -> "...        "
 
 let intersect (a: Value) (b: Value) =
@@ -146,14 +146,28 @@ type ALU(regs: Map<Reg, Value>) =
         let rec sync (alu1:ALU) (alu2:ALU) (regs:list<Reg>) =
             match regs with
             | [] -> alu1,alu2
-            | reg::rest -> 
-                let value = intersect (alu1.Get reg) (alu2.Get reg)
-                let alu1 = alu1.Set reg value
-                let alu2 = alu2.Set reg value
-                sync alu1 alu2 rest
+            | reg::rest ->
+                if alu1.Get reg = VOID || alu2.Get reg = VOID then
+                    sync alu1 alu2 rest
+                else 
+                    let value = intersect (alu1.Get reg) (alu2.Get reg)
+                    let alu1 = alu1.Set reg value
+                    let alu2 = alu2.Set reg value
+                    sync alu1 alu2 rest
         sync this other regs 
-                
-                
+    
+    member this.SyncVoid (other:ALU) (regs:List<Reg>) =
+        let rec sync (alu1:ALU) (alu2:ALU) (regs:list<Reg>) =
+            match regs with
+            | [] -> alu1,alu2
+            | reg::rest ->
+                if alu1.Get reg = VOID || alu2.Get reg = VOID then
+                    let alu1 = alu1.Set reg VOID
+                    let alu2 = alu2.Set reg VOID 
+                    sync alu1 alu2 rest
+                else
+                    sync alu1 alu2 rest
+        sync this other regs 
     
     override this.ToString() =
         ALU.allRegs
@@ -263,6 +277,8 @@ type Step(inst: Inst, input: ALU, output: ALU) =
     member this.Inst = inst
     member this.Input = input
     member this.Output = output
+    member this.SetInput (input:ALU) = Step(inst,input,output)
+    member this.SetOutput (output:ALU) = Step(inst,input,output)
 
     member this.NarrowValues() =
         match inst with
@@ -334,12 +350,42 @@ type Step(inst: Inst, input: ALU, output: ALU) =
             let input = input.Set r value
             let output = output.Set r result
             Step(inst, input, output)
-
-
         | _ ->
             printfn $"Not implemented {inst}"
             this
 
+    member this.SyncInternal () : Step =
+       match inst with
+       | INP (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | ADD (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | MUL (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | DIV (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | MOD (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | EQL (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | SET (r,_) ->
+           let input,output = input.SyncRegs output (ALU.allRegsExcept r)
+           Step (inst,input,output)
+       | NOP ->
+           let input,output = input.SyncRegs output ALU.allRegs
+           Step (inst,input,output)
+   
+    member this.Update() =
+        let step = this.NarrowValues ()
+        let step = step.SyncInternal ()
+        step 
+     
     override this.ToString() =
         $"⍗ {inst |> inst2String, -15} IN:{input, -30}   OUT:{output, -30}"
 
@@ -365,7 +411,36 @@ let readInput (filename: string) : List<Step> =
 
 let program = readInput "input.txt"
 
-let solve (program: List<Step>) =
-    program |> List.map (fun s -> s.NarrowValues())
+let rec syncDown (program:List<Step>) =
+    match program with
+    | [] -> []
+    | [final] -> [final]
+    | step1::step2::rest ->
+        let output1,input2 = step1.Output.SyncRegs step2.Input ALU.allRegs
+        let output1,input2 = output1.SyncVoid input2 ALU.allRegs 
+        let step1 = step1.SetOutput output1
+        let step2 = step2.SetInput input2
+        step1 :: (syncDown (step2::rest))
 
-program |> solve |> List.map (printfn "%A") |> ignore 
+let rec syncUp (program:List<Step>) =
+    let program = program |> List.rev
+    let program = 
+        match program with
+        | [] -> []
+        | [final] -> [final]
+        | step2::step1::rest ->
+            let output1,input2 = step1.Output.SyncRegs step2.Input ALU.allRegs
+            let output1,input2 = output1.SyncVoid input2 ALU.allRegs 
+            let step1 = step1.SetOutput output1
+            let step2 = step2.SetInput input2
+            step1 :: (syncDown (step2::rest))
+    program |> List.rev
+
+let solveStep (program: List<Step>) =
+    program
+    |> List.map (fun s -> s.NarrowValues())
+    |> List.map (fun s -> s.SyncInternal())
+    |> syncDown
+    |> syncUp 
+
+program |> solveStep |> List.map (printfn "%A") |> ignore 
