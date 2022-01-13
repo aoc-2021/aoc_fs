@@ -72,12 +72,18 @@ type SourcedNumber(value: int64, sources: Sources) =
                 else 0
             | _ -> 1
 
+    member this.IntersectWith(other:SourcedNumber) : Option<SourcedNumber> =
+        if value <> other.Value then None
+        else
+            let sources = sources.IntersectWith other.Sources
+            sources |> Option.map (fun sources -> SourcedNumber(value,sources))
+    
     override this.ToString() =
         if sources.Inputs.IsEmpty then
             value |> string
         else
             $"'{value}[{sources}]"
-
+            
     member this.Value = value
     member this.Sources = sources
     static member ofAnonymous(i: int64) = SourcedNumber(i, Sources [])
@@ -102,8 +108,16 @@ type SourcedValue(vals: Set<SourcedNumber>) =
         |> SourcedValue
     
     member this.intersectWithConst (num:SourcedNumber)  =
+        let addSource (sn:SourcedNumber) =
+            let sources = sn.Sources.IntersectWith num.Sources
+            sources |> Option.map (fun sources -> SourcedNumber(sn.Value,sources))
         let vals = vals |> Set.filter (fun sn -> sn.Value = num.Value)
-        1
+        let vals = vals
+                   |> Set.map addSource
+                   |> Set.filter Option.isSome
+                   |> Set.map Option.get
+        if vals.IsEmpty then None else Some(vals |> SourcedValue)
+            
      
     static member ofInts(inputs: List<int>) =
         inputs
@@ -173,6 +187,11 @@ let intersect (a: Value) (b: Value) =
     match a, b with
     | UNKNOWN, _ -> b
     | _, UNKNOWN -> a
+    | CONST a, CONST b -> a.IntersectWith b |> Option.get |> CONST 
+    | VALUES values, CONST c ->
+        values.intersectWithConst c
+        |> Option.get // assuming that there is an intersection  
+        |> VALUES 
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
