@@ -90,7 +90,7 @@ type Value =
 
 let _0 = SourcedNumber.ofAnonymous 0L |> CONST
 let _1 = SourcedNumber.ofAnonymous 1L |> CONST
-let binary = SourcedValue.ofInts ([ 0; 1 ])
+let binary = SourcedValue.ofInts [ 0; 1 ]
 
 let value2String (value: Value) =
     match value with
@@ -131,18 +131,30 @@ let inst2String (inst: Inst) =
     | EQL (r, value) -> $"{r} := {r} = {value |> value2String}"
     | SET (r, value) -> $"{r} := {value}"
     | NOP -> "...        "
-    | _ -> inst |> string
 
 let intersect (a: Value) (b: Value) =
     match a, b with
     | UNKNOWN, _ -> b
     | _, UNKNOWN -> a
-    | _ -> failwith $"Not implementend: intersect {a} {b}"
+    | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
     member this.Get(reg: Reg) = regs.TryFind reg |> Option.get
     member this.Set (reg: Reg) (value: Value) = regs.Add(reg, value) |> ALU
-
+    
+    member this.SyncRegs (other:ALU) (regs:list<Reg>) =
+        let rec sync (alu1:ALU) (alu2:ALU) (regs:list<Reg>) =
+            match regs with
+            | [] -> alu1,alu2
+            | reg::rest -> 
+                let value = intersect (alu1.Get reg) (alu2.Get reg)
+                let alu1 = alu1.Set reg value
+                let alu2 = alu2.Set reg value
+                sync alu1 alu2 rest
+        sync this other regs 
+                
+                
+    
     override this.ToString() =
         ALU.allRegs
         |> List.filter (fun r -> this.Get r <> UNKNOWN)
@@ -152,7 +164,7 @@ type ALU(regs: Map<Reg, Value>) =
 
     static member allRegs = [ W; X; Y; Z ]
     static member allRegsExcept(reg: Reg) = ALU.allRegs |> List.filter ((<>) reg)
-
+   
     static member initial =
         ALU.allRegs
         |> List.map (fun i -> i, CONST(SourcedNumber.ofAnonymous 0L))
@@ -170,7 +182,7 @@ type ALU(regs: Map<Reg, Value>) =
         |> List.map (fun i -> i, VOID)
         |> Map
         |> ALU
-        |> (fun alu -> alu.Set Z (_0))
+        |> (fun alu -> alu.Set Z _0)
 
 let readInstructions (file: string) =
     let input =
@@ -215,8 +227,6 @@ let readInstructions (file: string) =
 
     parse input 0
 
-
-
 let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
     let skip = reg,param,output 
     match reg, param, output with
@@ -238,7 +248,7 @@ let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
 
 let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
     let outputRange =
-        SourcedValue.ofInts ([ 0 .. (param |> int) - 1 ])
+        SourcedValue.ofInts [ 0 .. (param |> int) - 1 ]
         |> VALUES
     match reg, param, output with
     | UNKNOWN, _, UNKNOWN -> UNKNOWN, outputRange
@@ -265,7 +275,7 @@ type Step(inst: Inst, input: ALU, output: ALU) =
             let input = input.Set r VOID
             Step(inst, input, output)
         | SET (r, value) ->
-            let value = intersect (output.Get r) (value)
+            let value = intersect (output.Get r) value
             let output = output.Set r value
             let input = input.Set r VOID
             Step(inst, input, output)
@@ -340,7 +350,7 @@ let instructionsToProgram (instructions: list<Inst>) =
         | [ inst ] -> [ Step(inst, ALU.unknown, ALU.final) ]
         | inst :: rest ->
             Step(inst, ALU.unknown, ALU.unknown)
-            :: convert (rest)
+            :: convert rest
 
     let program = convert instructions
     let first = program.Head
@@ -358,4 +368,4 @@ let program = readInput "input.txt"
 let solve (program: List<Step>) =
     program |> List.map (fun s -> s.NarrowValues())
 
-program |> solve |> List.map (printfn "%A")
+program |> solve |> List.map (printfn "%A") |> ignore 
