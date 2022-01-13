@@ -58,7 +58,7 @@ type Sources(inputs: List<Map<int, Set<int64>>>) =
                 |> String.concat ",")
         |> String.concat ";"
 
-let src1 = Sources([[(1,[5L;6L;4L] |> Set)] |>Map])
+let src1 = Sources([[(1,[2L;6L;4L] |> Set)] |>Map;[(1,[2L;3L;4L] |> Set)] |>Map])
 let src2 = Sources([[(1,[1L;2L;3L] |>Set);(2,Set.singleton 2L)] |>Map])
 printfn $"XXXX {src1.IntersectWith src2}"
 
@@ -88,7 +88,7 @@ type SourcedNumber(value: int64, sources: Sources) =
     member this.Sources = sources
     static member ofAnonymous(i: int64) = SourcedNumber(i, Sources [])
 
-type SourcedValue(vals: Set<SourcedNumber>) =
+type SourcedValue(vals: Map<int64,SourcedNumber>) =
     member this.Vals = vals
 
     static member Input(id: int) =
@@ -101,33 +101,30 @@ type SourcedValue(vals: Set<SourcedNumber>) =
                     |> List.singleton
                 )
             )
-
         [ 1 .. 9 ]
-        |> List.map input
-        |> Set
+        |> List.map (fun i -> i |> int64,input i)
+        |> Map
         |> SourcedValue
     
-    member this.intersectWithConst (num:SourcedNumber)  =
+    member this.intersectWithConst (num:SourcedNumber) : Option<SourcedNumber> =
         let addSource (sn:SourcedNumber) =
             let sources = sn.Sources.IntersectWith num.Sources
             sources |> Option.map (fun sources -> SourcedNumber(sn.Value,sources))
-        let vals = vals |> Set.filter (fun sn -> sn.Value = num.Value)
-        let vals = vals
-                   |> Set.map addSource
-                   |> Set.filter Option.isSome
-                   |> Set.map Option.get
-        if vals.IsEmpty then None else Some(vals |> SourcedValue)
-            
-     
+        let value = vals.TryFind num.Value
+        if value.IsNone then None
+        else
+            let value = value |> Option.get
+            value.IntersectWith num
+    
     static member ofInts(inputs: List<int>) =
         inputs
-        |> Set
-        |> Set.map SourcedNumber.ofAnonymous
+        |> List.map (fun i -> i |> int64, SourcedNumber.ofAnonymous i)
+        |> Map 
         |> SourcedValue
 
     override this.ToString() =
         vals
-        |> Set.map (sprintf "%A")
+        |> Map.values |> Seq.map (sprintf "%A")
         |> String.concat " "
 
 type Value =
@@ -191,7 +188,7 @@ let intersect (a: Value) (b: Value) =
     | VALUES values, CONST c ->
         values.intersectWithConst c
         |> Option.get // assuming that there is an intersection  
-        |> VALUES 
+        |> CONST 
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
@@ -499,4 +496,7 @@ let solveStep (program: List<Step>) =
     |> syncDown
     |> syncUp 
 
-program |> solveStep |> List.map (printfn "%A") |> ignore 
+program
+    |> solveStep
+    |> solveStep
+    |> List.map (printfn "%A") |> ignore 
