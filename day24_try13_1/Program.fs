@@ -1,3 +1,4 @@
+open System
 open System.IO
 
 let file = File.ReadAllLines "input.txt"
@@ -247,6 +248,9 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
 
     member this.isNatural() = vals.Keys |> Seq.min >= 0L
 
+    member this.MinValue = vals.Keys |> Seq.min
+    member this.MaxValue = vals.Keys |> Seq.max 
+    
     member this.intersectWithConst(num: SourcedNumber) : Option<SourcedNumber> =
         let addSource (sn: SourcedNumber) =
             let sources = sn.Sources.IntersectWith num.Sources
@@ -411,6 +415,26 @@ let normalizeValue (value: Value) =
     | VALUES v -> v.Normalize() |> VALUES
     | REG r -> skip
     | VOID -> skip
+
+let minValue (value:Value) =
+    match value with
+    | UNKNOWN -> Int64.MinValue
+    | TO _ -> Int64.MinValue
+    | VOID _ -> Int64.MinValue 
+    | CONST i -> i.Value 
+    | FROM i -> i 
+    | VALUES v -> v.MinValue
+    | _ -> failwith $"minValue is unsupported for {value}"
+
+let maxValue (value:Value) =
+    match value with
+    | UNKNOWN -> Int64.MaxValue
+    | FROM _ -> Int64.MaxValue
+    | VOID _ -> Int64.MaxValue 
+    | CONST i -> i.Value 
+    | TO i -> i 
+    | VALUES v -> v.MaxValue
+    | _ -> failwith $"maxValue is unsupported for {value}"
 
 let isDefinitelyConstValue (value: Value) (i: int64) =
     match value with
@@ -669,7 +693,6 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
         let result =
             v1.BinaryOperationWithValue(*) v2 |> VALUES
         let output = intersect output result
-        printfn $"REG BEFORE::: {reg} {param} {output}"
         let reg =
             v1.UntracedFilter (fun v1 ->
                 let res = v2.BinaryOperationWithConst (*) v1 |> VALUES 
@@ -678,8 +701,6 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
             v2.UntracedFilter (fun v2 ->
                 let res = v1.BinaryOperationWithConst (*) v2 |> VALUES 
                 intersects res output) |> VALUES 
-        // TODO: Filter
-        printfn $"REG AFTER ::: {reg} {param} {output}"
         reg, param, output
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
@@ -701,8 +722,8 @@ let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
 
     match reg, output with
     | UNKNOWN, UNKNOWN -> FROM 0L, outputRange
-    | FROM 0L, CONST c when c.Value = 0L -> skip
-    | FROM 0L, VALUES v when v.Vals.ContainsKey 0L -> skip
+    | FROM from, _ when minValue output = from -> skip
+    | FROM from, _ when minValue output > from -> FROM (minValue output), output
     | CONST a, _ ->
         let result =
             a.BinaryOperation(fun a b -> a % b) (SourcedNumber.ofAnonymous param)
@@ -982,6 +1003,7 @@ type Step(inst: Inst, input: ALU, output: ALU) =
         | MUL (r, _) when input.Get r |> isDefinitelyZero -> Step(NOP, input, output)
         | MOD (r, _) when output.Get r = VOID -> Step(NOP, input, output)
         | MOD (r, _) when input.Get r |> isDefinitelyZero -> Step(NOP, input, output)
+        | MOD (r, i) when (input.Get r |> maxValue) < i -> Step(NOP,input,output)
         | DIV (r, _) when output.Get r = VOID -> Step(NOP, input, output)
         | DIV (r, _) when input.Get r |> isDefinitelyZero -> Step(NOP, input, output)
         | EQL (r, _) when output.Get r = VOID -> Step(NOP, input, output)
@@ -1070,6 +1092,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 30 program
+solveSteps 31 program
 |> List.map (printfn "%A")
 |> ignore
