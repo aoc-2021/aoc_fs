@@ -72,33 +72,61 @@ type Sources(inputs: list<Map<int, Set<int64>>>) =
             else
                 Some(Sources(deps))
 
-    member this.Normalize () =
-        let allInputs = [1L..9L] |> Set
-        if inputs.IsEmpty || inputs.Length = 1 then this
+    member this.Normalize() =
+        let allInputs = [ 1L .. 9L ] |> Set
+
+        if inputs.IsEmpty || inputs.Length = 1 then
+            this
         else
-            let mergeGroup (keys:Set<int>,maps:list<Map<int,Set<int64>>>) =
+            let mergeGroup (keys: Set<int>, maps: list<Map<int, Set<int64>>>) =
                 let onlySingleDiff =
-                    let allValues (id:int) = maps |> List.map (fun m -> m.TryFind id |> Option.get)
+                    let allValues (id: int) =
+                        maps
+                        |> List.map (fun m -> m.TryFind id |> Option.get)
+
                     let allSame (sets: list<Set<int64>>) = sets |> Set |> Set.count = 1
-                    let diffValues = allValues >> allSame >> not 
+                    let diffValues = allValues >> allSame >> not
                     printfn $"XYZ:: {keys}:{keys.GetType} {maps}:{maps.GetType}"
-                    let diffValues = keys |> Set.toList |> List.filter diffValues
+
+                    let diffValues =
+                        keys |> Set.toList |> List.filter diffValues
+
                     printfn $"diffValues={diffValues}"
                     diffValues.Length <= 1
-                let mergeAll () : Map<int,Set<int64>> = 
-                    let allValues (id:int) = maps |> List.map (fun m -> m.TryFind id |> Option.get)
+
+                let mergeAll () : Map<int, Set<int64>> =
+                    let allValues (id: int) =
+                        maps
+                        |> List.map (fun m -> m.TryFind id |> Option.get)
+
                     let mergedValues = allValues >> Set.unionMany
-                    keys |> Set.toList |> List.map (fun i -> (i,mergedValues i) )|> Map
+
+                    keys
+                    |> Set.toList
+                    |> List.map (fun i -> (i, mergedValues i))
+                    |> Map
+
                 if onlySingleDiff then
                     [ mergeAll () ]
                 else
-                    maps 
-            let groups : list<Set<int>*list<Map<int,Set<int64>>>> =
-                inputs |> List.groupBy (fun (m:Map<int,Set<int64>>) -> m.Keys |> Set)
-            let merged = groups |> List.map mergeGroup |> List.concat
-            let merged = merged |> List.map (Map.filter (fun _ v -> v <> allInputs))
-            let merged = merged |> List.filter (Map.isEmpty >> not)
+                    maps
+
+            let groups: list<Set<int> * list<Map<int, Set<int64>>>> =
+                inputs
+                |> List.groupBy (fun (m: Map<int, Set<int64>>) -> m.Keys |> Set)
+
+            let merged =
+                groups |> List.map mergeGroup |> List.concat
+
+            let merged =
+                merged
+                |> List.map (Map.filter (fun _ v -> v <> allInputs))
+
+            let merged =
+                merged |> List.filter (Map.isEmpty >> not)
+
             merged |> Sources
+
     member this.unionWith(other: Sources) =
         Sources(List.concat [ inputs; other.Inputs ])
 
@@ -142,9 +170,9 @@ let src2 =
           |> Map ]
     )
 
-let srcx:Sources = src1.IntersectWith src2 |> Option.get 
+let srcx: Sources = src1.IntersectWith src2 |> Option.get
 printfn $"XXX1 {srcx}"
-let srxy = srcx.Normalize ()
+let srxy = srcx.Normalize()
 printfn $"XXXN {srxy}"
 
 type SourcedNumber(value: int64, sources: Sources) =
@@ -173,7 +201,9 @@ type SourcedNumber(value: int64, sources: Sources) =
         sources
         |> Option.map (fun i -> SourcedNumber(value, i))
 
-    member this.Normalize () = SourcedNumber(value,sources.Normalize())
+    member this.Normalize() =
+        SourcedNumber(value, sources.Normalize())
+
     override this.ToString() =
         if sources.Inputs.IsEmpty then
             value |> string
@@ -293,8 +323,16 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
 
         result
 
-    member this.Normalize () = vals |> Map.map (fun _ v -> v.Normalize ()) |> SourcedValue
-    
+    member this.UntracedFilter(pred: SourcedNumber -> bool) =
+        vals
+        |> Map.filter (fun k _ -> vals.TryFind(k) |> Option.get |> pred)
+        |> SourcedValue
+
+    member this.Normalize() =
+        vals
+        |> Map.map (fun _ v -> v.Normalize())
+        |> SourcedValue
+
     static member ofInts(inputs: List<int>) =
         inputs
         |> List.map (fun i -> i |> int64, SourcedNumber.ofAnonymous i)
@@ -355,16 +393,17 @@ let value2String (value: Value) =
     | REG r -> r |> string
     | VOID -> "∅"
 
-let normalizeValue (value:Value) =
-    let skip = value 
+let normalizeValue (value: Value) =
+    let skip = value
+
     match value with
-    | UNKNOWN -> skip 
-    | CONST i -> i.Normalize () |> CONST 
-    | FROM i -> skip 
-    | TO i -> skip 
-    | VALUES v -> v.Normalize() |> VALUES 
-    | REG r -> skip 
-    | VOID -> skip 
+    | UNKNOWN -> skip
+    | CONST i -> i.Normalize() |> CONST
+    | FROM i -> skip
+    | TO i -> skip
+    | VALUES v -> v.Normalize() |> VALUES
+    | REG r -> skip
+    | VOID -> skip
 
 type Param =
     | R of Reg
@@ -406,8 +445,20 @@ let intersect (a: Value) (b: Value) =
         |> Option.get // assuming that there is an intersection
         |> CONST
     | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.get |> VALUES
-    | _ -> a
+    | FROM a, FROM b -> FROM (max a b)
+    | FROM from , CONST c -> if c.Value >= from then b else failwith $"No intersection {a} {b}"
+    | CONST c, FROM from -> if c.Value >= from then a else failwith $"No intersection {a} {b}"
+    | CONST c, VALUES v -> v.intersectWithConst c |> Option.get |> CONST
     | _ -> failwith $"Not implemented: intersect {a} {b}"
+
+let intersects (a: Value) (b: Value) =
+    match a, b with
+    | UNKNOWN, _ -> true 
+    | _, UNKNOWN -> true 
+    | CONST a, CONST b -> a.IntersectWith b |> Option.isSome 
+    | VALUES values, CONST c -> values.intersectWithConst c |> Option.isSome
+    | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.isSome 
+    | _ -> failwith $"Not implemented: intersects {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
     member this.Get(reg: Reg) = regs.TryFind reg |> Option.get
@@ -442,9 +493,11 @@ type ALU(regs: Map<Reg, Value>) =
 
         sync this other regs
 
-    member this.Normalize () : ALU =
-        regs |> Map.map (fun _ v -> normalizeValue v) |> ALU 
-    
+    member this.Normalize() : ALU =
+        regs
+        |> Map.map (fun _ v -> normalizeValue v)
+        |> ALU
+
     override this.ToString() =
         ALU.allRegs
         |> List.filter (fun r -> this.Get r <> UNKNOWN)
@@ -525,10 +578,12 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     | UNKNOWN, _, UNKNOWN -> skip
     | FROM _, UNKNOWN, FROM _ -> skip
     | FROM from, _, CONST c when c.Value = 0L ->
+        printfn $"From_Const: Intersecting param {param} {TO (-from)} "
         let param = intersect param (TO(-from))
-        // TODO : filter reg 
+        printfn $"From_Const: Intersecting param => {param}"
+       // TODO : filter reg
         reg, param, output
-    | FROM _,_,FROM _ -> skip
+    | FROM _, _, FROM _ -> skip
     | CONST c, _, _ when c.Value = 0L ->
         let value = intersect param output
         reg, value, value
@@ -536,9 +591,12 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     | VALUES v1, CONST c, _ ->
         let result =
             v1.BinaryOperationWithConst(+) c |> VALUES
-
         let output = intersect result output
         // TODO: filter input
+        let reg = v1.UntracedFilter (fun num ->
+            let num = num.BinaryOperation (+) c |> Option.get 
+            intersects output (CONST num)) |> VALUES
+        // printfn $"narrowed to {reg} {param} {output}"
         reg, param, result
     | _ -> failwith $"narrowAdd: Not implemented: {reg} {param} {output}"
 
@@ -800,11 +858,11 @@ type Step(inst: Inst, input: ALU, output: ALU) =
         let step = step.SyncInternal()
         step
 
-    member this.Normalize () =
-        let input = input.Normalize ()
-        let output = output.Normalize ()
-        Step (inst,input,output)
-    
+    member this.Normalize() =
+        let input = input.Normalize()
+        let output = output.Normalize()
+        Step(inst, input, output)
+
     override this.ToString() =
         $"⍗ {inst |> inst2String, -15} IN:{input, -30}   OUT:{output, -30}"
 
