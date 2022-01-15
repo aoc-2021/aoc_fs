@@ -97,6 +97,7 @@ type Sources(inputs: list<Map<int, Set<int64>>>) =
                 inputs |> List.groupBy (fun (m:Map<int,Set<int64>>) -> m.Keys |> Set)
             let merged = groups |> List.map mergeGroup |> List.concat
             let merged = merged |> List.map (Map.filter (fun _ v -> v <> allInputs))
+            let merged = merged |> List.filter (Map.isEmpty >> not)
             merged |> Sources
     member this.unionWith(other: Sources) =
         Sources(List.concat [ inputs; other.Inputs ])
