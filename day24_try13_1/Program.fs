@@ -86,12 +86,10 @@ type Sources(inputs: list<Map<int, Set<int64>>>) =
 
                     let allSame (sets: list<Set<int64>>) = sets |> Set |> Set.count = 1
                     let diffValues = allValues >> allSame >> not
-                    printfn $"XYZ:: {keys}:{keys.GetType} {maps}:{maps.GetType}"
 
                     let diffValues =
                         keys |> Set.toList |> List.filter diffValues
 
-                    printfn $"diffValues={diffValues}"
                     diffValues.Length <= 1
 
                 let mergeAll () : Map<int, Set<int64>> =
@@ -662,6 +660,16 @@ let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
         let result = result |> Option.get |> CONST
         let value = intersect output result
         reg, value
+    | VALUES v1, _ ->
+        let result =
+            v1.BinaryOperationWithConst (fun i c -> i % c) (SourcedNumber.ofAnonymous(param)) |> VALUES
+        let output = intersect result output
+        // TODO: filter input
+        let reg = v1.UntracedFilter (fun num ->
+            let num = num.BinaryOperation (fun i c -> i % c) (SourcedNumber.ofAnonymous(param)) |> Option.get 
+            intersects output (CONST num)) |> VALUES
+        // printfn $"narrowed to {reg} {param} {output}"
+        reg, result
     | _ -> failwith $"narrowMod: Not implemented: {reg} {param} {output}"
 
 let narrowEql (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
@@ -944,6 +952,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 19 program
+solveSteps 22 program
 |> List.map (printfn "%A")
 |> ignore
