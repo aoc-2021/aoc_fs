@@ -72,6 +72,15 @@ type Sources(inputs: List<Map<int, Set<int64>>>) =
             else
                 Some(Sources(deps))
 
+    member this.Normalize () =
+        if inputs.IsEmpty || inputs.Length = 1 then this
+        else
+            let mergeGroup (keys,maps) =
+                maps 
+            let groups = inputs |> List.groupBy (Map.keys >> Set)
+            printfn $"Sources.Normalize: groups = {groups}"
+            groups |> List.map mergeGroup |> List.concat |> Sources 
+    
     member this.unionWith(other: Sources) =
         Sources(List.concat [ inputs; other.Inputs ])
 
@@ -115,7 +124,10 @@ let src2 =
           |> Map ]
     )
 
-printfn $"XXXX {src1.IntersectWith src2}"
+let srcx:Sources = src1.IntersectWith src2 |> Option.get 
+printfn $"XXX1 {srcx}"
+let srxy = srcx.Normalize ()
+printfn $"XXXN {srxy}"
 
 type SourcedNumber(value: int64, sources: Sources) =
     interface System.IComparable with
