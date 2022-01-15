@@ -480,7 +480,8 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
         // TODO : filter input
         reg, param, output
     | FROM 0L, VALUES v, UNKNOWN when v.isNatural () ->
-        reg,param,FROM 0L 
+        reg,param,FROM 0L
+    | FROM 0L, VALUES v, FROM 0L when v.ContainsAny ((<>) 0L) -> skip
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
 let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
@@ -786,6 +787,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 12 program
+solveSteps 13 program
 |> List.map (printfn "%A")
 |> ignore
