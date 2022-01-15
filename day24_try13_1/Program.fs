@@ -233,6 +233,11 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
         |> Map
         |> SourcedValue
 
+    member this.Size = vals.Count
+    
+    member this.GetSingleton () =
+        if this.Size <> 1 then failwith $"Attempting to get singleton from ${this}"
+        else vals.Values |> Seq.toList |> List.head 
     member this.ContainsAny(pred: int64 -> bool) =
         vals.Keys |> Seq.tryFind pred |> Option.isSome
 
@@ -401,6 +406,7 @@ let normalizeValue (value: Value) =
     | CONST i -> i.Normalize() |> CONST
     | FROM i -> skip
     | TO i -> skip
+    | VALUES v when v.Size = 1 -> v.GetSingleton () |> CONST 
     | VALUES v -> v.Normalize() |> VALUES
     | REG r -> skip
     | VOID -> skip
@@ -445,10 +451,14 @@ let intersect (a: Value) (b: Value) =
         |> Option.get // assuming that there is an intersection
         |> CONST
     | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.get |> VALUES
+    | VALUES v, TO c -> v.UntracedFilter (fun i -> i.Value <= c) |> VALUES
+    | VALUES v, FROM from -> v.UntracedFilter (fun i -> i.Value >= from) |> VALUES 
     | FROM a, FROM b -> FROM (max a b)
     | FROM from , CONST c -> if c.Value >= from then b else failwith $"No intersection {a} {b}"
     | CONST c, FROM from -> if c.Value >= from then a else failwith $"No intersection {a} {b}"
+    | CONST c, TO t -> if c.Value <= t then a else failwith $"No intersection {a} {b}"
     | CONST c, VALUES v -> v.intersectWithConst c |> Option.get |> CONST
+    | FROM c, VALUES v -> v.UntracedFilter (fun i -> i.Value >= c) |> VALUES 
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 let intersects (a: Value) (b: Value) =
