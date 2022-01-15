@@ -232,10 +232,13 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
         |> SourcedValue
 
     member this.Size = vals.Count
-    
-    member this.GetSingleton () =
-        if this.Size <> 1 then failwith $"Attempting to get singleton from ${this}"
-        else vals.Values |> Seq.toList |> List.head 
+
+    member this.GetSingleton() =
+        if this.Size <> 1 then
+            failwith $"Attempting to get singleton from ${this}"
+        else
+            vals.Values |> Seq.toList |> List.head
+
     member this.ContainsAny(pred: int64 -> bool) =
         vals.Keys |> Seq.tryFind pred |> Option.isSome
 
@@ -404,10 +407,19 @@ let normalizeValue (value: Value) =
     | CONST i -> i.Normalize() |> CONST
     | FROM i -> skip
     | TO i -> skip
-    | VALUES v when v.Size = 1 -> v.GetSingleton () |> CONST 
+    | VALUES v when v.Size = 1 -> v.GetSingleton() |> CONST
     | VALUES v -> v.Normalize() |> VALUES
     | REG r -> skip
     | VOID -> skip
+
+let isDefinitelyConstValue (value: Value) (i: int64) =
+    match value with
+    | CONST c when c.Value = i -> true
+    | _ -> false
+
+let isDefinitelyZero value = isDefinitelyConstValue value 0L
+
+let isDefinitelyOne value = isDefinitelyConstValue value 1L
 
 type Param =
     | R of Reg
@@ -449,23 +461,37 @@ let intersect (a: Value) (b: Value) =
         |> Option.get // assuming that there is an intersection
         |> CONST
     | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.get |> VALUES
-    | VALUES v, TO c -> v.UntracedFilter (fun i -> i.Value <= c) |> VALUES
-    | VALUES v, FROM from -> v.UntracedFilter (fun i -> i.Value >= from) |> VALUES 
-    | FROM a, FROM b -> FROM (max a b)
-    | FROM from , CONST c -> if c.Value >= from then b else failwith $"No intersection {a} {b}"
-    | CONST c, FROM from -> if c.Value >= from then a else failwith $"No intersection {a} {b}"
-    | CONST c, TO t -> if c.Value <= t then a else failwith $"No intersection {a} {b}"
+    | VALUES v, TO c -> v.UntracedFilter(fun i -> i.Value <= c) |> VALUES
+    | VALUES v, FROM from ->
+        v.UntracedFilter(fun i -> i.Value >= from)
+        |> VALUES
+    | FROM a, FROM b -> FROM(max a b)
+    | FROM from, CONST c ->
+        if c.Value >= from then
+            b
+        else
+            failwith $"No intersection {a} {b}"
+    | CONST c, FROM from ->
+        if c.Value >= from then
+            a
+        else
+            failwith $"No intersection {a} {b}"
+    | CONST c, TO t ->
+        if c.Value <= t then
+            a
+        else
+            failwith $"No intersection {a} {b}"
     | CONST c, VALUES v -> v.intersectWithConst c |> Option.get |> CONST
-    | FROM c, VALUES v -> v.UntracedFilter (fun i -> i.Value >= c) |> VALUES 
+    | FROM c, VALUES v -> v.UntracedFilter(fun i -> i.Value >= c) |> VALUES
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 let intersects (a: Value) (b: Value) =
     match a, b with
-    | UNKNOWN, _ -> true 
-    | _, UNKNOWN -> true 
-    | CONST a, CONST b -> a.IntersectWith b |> Option.isSome 
+    | UNKNOWN, _ -> true
+    | _, UNKNOWN -> true
+    | CONST a, CONST b -> a.IntersectWith b |> Option.isSome
     | VALUES values, CONST c -> values.intersectWithConst c |> Option.isSome
-    | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.isSome 
+    | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.isSome
     | _ -> failwith $"Not implemented: intersects {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
@@ -582,18 +608,21 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     let skip = reg, param, output
 
     match reg, param, output with
+    | _, _, VOID -> skip
     | UNKNOWN, UNKNOWN, _ -> skip
     | UNKNOWN, _, UNKNOWN -> skip
     | FROM _, UNKNOWN, FROM _ -> skip
-    | _ , CONST p, CONST r ->
-        let value = r.BinaryOperation (-) p |> Option.get |> CONST 
+    | _, CONST p, CONST r ->
+        let value =
+            r.BinaryOperation(-) p |> Option.get |> CONST
+
         let reg = intersect reg value
-        reg,param,output  
+        reg, param, output
     | FROM from, _, CONST c when c.Value = 0L ->
-        printfn $"From_Const: Intersecting param {param} {TO (-from)} "
+        printfn $"From_Const: Intersecting param {param} {TO(-from)} "
         let param = intersect param (TO(-from))
         printfn $"From_Const: Intersecting param => {param}"
-       // TODO : filter reg
+        // TODO : filter reg
         reg, param, output
     | FROM _, _, FROM _ -> skip
     | CONST c, _, _ when c.Value = 0L ->
@@ -603,11 +632,15 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     | VALUES v1, CONST c, _ ->
         let result =
             v1.BinaryOperationWithConst(+) c |> VALUES
+
         let output = intersect result output
         // TODO: filter input
-        let reg = v1.UntracedFilter (fun num ->
-            let num = num.BinaryOperation (+) c |> Option.get 
-            intersects output (CONST num)) |> VALUES
+        let reg =
+            v1.UntracedFilter
+                (fun num ->
+                    let num = num.BinaryOperation(+) c |> Option.get
+                    intersects output (CONST num))
+            |> VALUES
         // printfn $"narrowed to {reg} {param} {output}"
         reg, param, result
     | _ -> failwith $"narrowAdd: Not implemented: {reg} {param} {output}"
@@ -616,9 +649,12 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     let skip = reg, param, output
 
     match reg, param, output with
+    | _, _, VOID -> skip
     | UNKNOWN, UNKNOWN, _ -> skip
     | _, UNKNOWN, UNKNOWN -> skip
     | UNKNOWN, _, UNKNOWN -> skip
+    | _, _, _ when isDefinitelyZero param && isDefinitelyZero output -> skip
+    | _, _, _ when isDefinitelyZero reg && isDefinitelyZero output -> skip 
     | CONST c, VALUES v, _ ->
         let result =
             v.BinaryOperationWithConst(*) c |> VALUES
@@ -628,14 +664,22 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
         reg, param, output
     | FROM 0L, VALUES v, UNKNOWN when v.isNatural () -> reg, param, FROM 0L
     | FROM 0L, VALUES v, FROM 0L when v.ContainsAny((<>) 0L) -> skip
-    | FROM 0L, VALUES v, CONST c when c.Value = 0L && v.ContainsNone ((=) 0L) ->
-        output, param, output  
+    | FROM 0L, VALUES v, CONST c when c.Value = 0L && v.ContainsNone((=) 0L) -> output, param, output
     | VALUES v1, VALUES v2, _ ->
         let result =
             v1.BinaryOperationWithValue(*) v2 |> VALUES
-
         let output = intersect output result
+        printfn $"REG BEFORE::: {reg} {param} {output}"
+        let reg =
+            v1.UntracedFilter (fun v1 ->
+                let res = v2.BinaryOperationWithConst (*) v1 |> VALUES 
+                intersects res output) |> VALUES 
+        let param =
+            v2.UntracedFilter (fun v2 ->
+                let res = v1.BinaryOperationWithConst (*) v2 |> VALUES 
+                intersects res output) |> VALUES 
         // TODO: Filter
+        printfn $"REG AFTER ::: {reg} {param} {output}"
         reg, param, output
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
@@ -668,22 +712,56 @@ let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
         reg, value
     | VALUES v1, _ ->
         let result =
-            v1.BinaryOperationWithConst (fun i c -> i % c) (SourcedNumber.ofAnonymous(param)) |> VALUES
+            v1.BinaryOperationWithConst(fun i c -> i % c) (SourcedNumber.ofAnonymous (param))
+            |> VALUES
+
         let output = intersect result output
         // TODO: filter input
-        let reg = v1.UntracedFilter (fun num ->
-            let num = num.BinaryOperation (fun i c -> i % c) (SourcedNumber.ofAnonymous(param)) |> Option.get 
-            intersects output (CONST num)) |> VALUES
+        let reg =
+            v1.UntracedFilter
+                (fun num ->
+                    let num =
+                        num.BinaryOperation(fun i c -> i % c) (SourcedNumber.ofAnonymous (param))
+                        |> Option.get
+
+                    intersects output (CONST num))
+            |> VALUES
         // printfn $"narrowed to {reg} {param} {output}"
         reg, result
     | _ -> failwith $"narrowMod: Not implemented: {reg} {param} {output}"
 
 let narrowEql (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
+    let output = intersect output (VALUES binary)
+    let is0 = intersects output _0
+    let is1 = intersects output _1
+    let is01 = is0 && is1
+    let is0 = is0 && (not is1)
+    let is1 = is1 && (not is0)
+
     let skip = reg, param, output
 
-    match reg, param, output with
-    | UNKNOWN, _, UNKNOWN -> UNKNOWN, param, VALUES binary
-    | _ -> skip // TOOD
+    match reg, param with
+    | UNKNOWN, _ when is01 -> skip
+    | _, UNKNOWN when is01 -> skip
+    | UNKNOWN, UNKNOWN -> skip
+        | CONST c1, CONST c2 when is0 ->
+        if (c1.Value = c2.Value) then failwith $"EQL: {reg} {param} -> 0"
+        else skip 
+    | VALUES _, CONST _ when is01 -> skip
+    | CONST _, VALUES _ when is01 -> skip
+    | VALUES _, VALUES _ when is01 -> skip
+    | VALUES v1, CONST c2 when is0 ->
+        let reg = v1.UntracedFilter (fun i -> i.Value <> c2.Value) |> VALUES
+        reg,param,output
+    | CONST c1, VALUES v2 when is0 ->
+        let param = v2.UntracedFilter (fun i -> i.Value <> c1.Value) |> VALUES
+        reg,param,output
+    | _, _ when is1 ->
+        let value = intersect reg param
+        value,value,output 
+         
+       
+
     | _ -> failwith $"narrowEql: Not implemented: {reg} {param} {output}"
 
 type Step(inst: Inst, input: ALU, output: ALU) =
@@ -702,11 +780,22 @@ type Step(inst: Inst, input: ALU, output: ALU) =
             let output = output.Set r value
             let input = input.Set r VOID
             Step(inst, input, output)
+        | SET (r, REG other) ->
+            if output.Get r = VOID then
+                this
+            else
+                let value = intersect (output.Get r) (input.Get other)
+                let output = output.Set r value
+                let input = input.Set r VOID
+                Step(inst, input, output)
         | SET (r, value) ->
-            let value = intersect (output.Get r) value
-            let output = output.Set r value
-            let input = input.Set r VOID
-            Step(inst, input, output)
+            if output.Get r = VOID then
+                this
+            else
+                let value = intersect (output.Get r) value
+                let output = output.Set r value
+                let input = input.Set r VOID
+                Step(inst, input, output)
         | ADD (r, REG other) ->
             let value = input.Get r
             let param = input.Get other
@@ -826,6 +915,12 @@ type Step(inst: Inst, input: ALU, output: ALU) =
                 input.SyncVoid output (ALU.allRegsExcept r)
 
             Step(inst, input, output)
+        | MUL (r, REG _) when input.Get r |> isDefinitelyZero ->
+            let input, output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst, input, output)
+        | MUL (_, REG other) when input.Get other |> isDefinitelyZero ->
+            let input, output = input.SyncVoid output (ALU.allRegsExcept other)
+            Step(inst, input, output)
         | MUL (r, REG other) ->
             let regs =
                 ALU.allRegs
@@ -876,6 +971,22 @@ type Step(inst: Inst, input: ALU, output: ALU) =
             let input, output = input.SyncVoid output ALU.allRegs
             Step(inst, input, output)
         | _ -> failwith $"Not implemented: {inst}"
+
+    member this.Simplify() =
+        let skip = this
+
+        match inst with
+        | ADD (r, _) when output.Get r = VOID -> Step(NOP, input, output)
+        | MUL (r, _) when output.Get r = VOID -> Step(NOP, input, output)
+        | MUL (r, REG other) when input.Get other |> isDefinitelyZero -> Step(SET(r, REG other), input, output)
+        | MUL (r, _) when input.Get r |> isDefinitelyZero -> Step(NOP, input, output)
+        | MOD (r, _) when output.Get r = VOID -> Step(NOP, input, output)
+        | MOD (r, _) when input.Get r |> isDefinitelyZero -> Step(NOP, input, output)
+        | DIV (r, _) when output.Get r = VOID -> Step(NOP, input, output)
+        | DIV (r, _) when input.Get r |> isDefinitelyZero -> Step(NOP, input, output)
+        | EQL (r, _) when output.Get r = VOID -> Step(NOP, input, output)
+        | SET (r, _) when output.Get r = VOID -> Step(NOP, input, output)
+        | _ -> skip
 
     member this.Update() =
         let step = this.NarrowValues()
@@ -948,6 +1059,7 @@ let solveStep (program: List<Step>) =
     |> List.map (fun s -> s.SyncInternal())
     |> List.map (fun s -> s.SyncVoidInternal())
     |> List.map (fun s -> s.Normalize())
+    |> List.map (fun s -> s.Simplify())
     |> syncDown
     |> syncUp
 
@@ -958,6 +1070,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 24 program
+solveSteps 30 program
 |> List.map (printfn "%A")
 |> ignore
