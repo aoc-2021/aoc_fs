@@ -77,7 +77,12 @@ type SourcedNumber(value: int64, sources: Sources) =
         else
             let sources = sources.IntersectWith other.Sources
             sources |> Option.map (fun sources -> SourcedNumber(value,sources))
-    
+   
+    member this.BinaryOperation (op:int64->int64->int64) (other:SourcedNumber) : Option<SourcedNumber> =
+        let value = op this.Value other.Value 
+        let sources = this.Sources.IntersectWith other.Sources
+        sources |> Option.map (fun i -> SourcedNumber(value,i))
+     
     override this.ToString() =
         if sources.Inputs.IsEmpty then
             value |> string
@@ -115,7 +120,17 @@ type SourcedValue(vals: Map<int64,SourcedNumber>) =
         else
             let value = value |> Option.get
             value.IntersectWith num
-    
+   
+    member this.intersectWithValues (other:SourcedValue) : Option<SourcedValue> =
+        let sharedInts = Set.intersect (vals.Keys |> Set) (other.Vals.Keys |> Set)
+        sharedInts
+        |> Set.map (fun i -> i,vals.TryFind i |> Option.get,other.Vals.TryFind i |> Option.get)
+        |> Set.map (fun (i,num1,num2) -> i,num1.IntersectWith num2)
+        |> Set.filter (fun (_,num) -> num.IsSome)
+        |> Set.map (fun (i,num) -> i,num |> Option.get)
+        |> Set.toList |> Map
+        |> (fun m -> if m.IsEmpty then None else Some(m |> SourcedValue))
+         
     static member ofInts(inputs: List<int>) =
         inputs
         |> List.map (fun i -> i |> int64, SourcedNumber.ofAnonymous i)
@@ -127,6 +142,9 @@ type SourcedValue(vals: Map<int64,SourcedNumber>) =
         |> Map.values |> Seq.map (sprintf "%A")
         |> String.concat " "
 
+let n1 = SourcedNumber (2,Sources [([(1,[2L;3L]|>Set)] |> Map)])
+let n2 = SourcedNumber (4,Sources [[(1,[2L;4L]|>Set);(2,[5L;6L]|>Set)] |> Map])
+                                   
 type Value =
     | UNKNOWN
     | CONST of SourcedNumber
@@ -188,7 +206,9 @@ let intersect (a: Value) (b: Value) =
     | VALUES values, CONST c ->
         values.intersectWithConst c
         |> Option.get // assuming that there is an intersection  
-        |> CONST 
+        |> CONST
+    | VALUES v1, VALUES v2 -> v1.intersectWithValues v2 |> Option.get |> VALUES
+    | _ -> a
     | _ -> failwith $"Not implemented: intersect {a} {b}"
 
 type ALU(regs: Map<Reg, Value>) =
@@ -298,13 +318,16 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     let skip = reg,param,output 
     match reg, param, output with
     | UNKNOWN, UNKNOWN, _ -> skip 
-    | UNKNOWN, _, UNKNOWN -> skip 
+    | UNKNOWN, _, UNKNOWN -> skip
+    | _,_,VOID -> VOID,param,VOID
+    | _ -> skip // TODO : temporary, only to see
     | _ -> failwith $"narrowAdd: Not implemented: {reg} {param} {output}"
 
 let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
     let skip = reg,param,output 
     match reg, param, output with
     | UNKNOWN, UNKNOWN, UNKNOWN -> skip
+    | _ -> skip // TODO: remove
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
 let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
@@ -314,16 +337,20 @@ let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
     | _ -> failwith $"narrowDiv: Not implemented: {reg} {param} {output}"
 
 let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
+    let skip = reg,output 
     let outputRange =
         SourcedValue.ofInts [ 0 .. (param |> int) - 1 ]
         |> VALUES
     match reg, param, output with
-    | UNKNOWN, _, UNKNOWN -> UNKNOWN, outputRange
+    | UNKNOWN, _, UNKNOWN -> FROM 0L, outputRange
+    | FROM 0L,_,CONST c when c.Value = 0L -> skip 
     | _ -> failwith $"narrowMod: Not implemented: {reg} {param} {output}"
 
 let narrowEql (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
+    let skip = reg,param,output 
     match reg, param, output with
     | UNKNOWN, _, UNKNOWN -> UNKNOWN, param, VALUES binary
+    | _ -> skip // TOOD 
     | _ -> failwith $"narrowEql: Not implemented: {reg} {param} {output}"
 
 type Step(inst: Inst, input: ALU, output: ALU) =
