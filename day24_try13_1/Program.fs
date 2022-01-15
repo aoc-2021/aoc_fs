@@ -444,12 +444,17 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     match reg, param, output with
     | UNKNOWN, UNKNOWN, _ -> skip
     | UNKNOWN, _, UNKNOWN -> skip
+    | CONST c, _, _ when c.Value = 0L ->
+        let value = intersect param output
+        reg, value, value
     | _, _, VOID -> VOID, param, VOID
     | VALUES v1, CONST c, _ ->
-        let result = v1.BinaryOperationWithConst (+) c |> VALUES 
+        let result =
+            v1.BinaryOperationWithConst(+) c |> VALUES
+
         let output = intersect result output
         // TODO: filter input
-        reg,param,result 
+        reg, param, result
     | _ -> failwith $"narrowAdd: Not implemented: {reg} {param} {output}"
 
 let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
@@ -457,6 +462,7 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
 
     match reg, param, output with
     | UNKNOWN, UNKNOWN, _ -> skip
+    | _, UNKNOWN, UNKNOWN -> skip
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
 let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
@@ -473,9 +479,10 @@ let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
         SourcedValue.ofInts [ 0 .. (param |> int) - 1 ]
         |> VALUES
 
-    match reg, param, output with
-    | UNKNOWN, _, UNKNOWN -> FROM 0L, outputRange
-    | FROM 0L, _, CONST c when c.Value = 0L -> skip
+    match reg, output with
+    | UNKNOWN, UNKNOWN -> FROM 0L, outputRange
+    | FROM 0L, CONST c when c.Value = 0L -> skip
+    | FROM 0L, VALUES v when v.Vals.ContainsKey 0L -> skip
     | _ -> failwith $"narrowMod: Not implemented: {reg} {param} {output}"
 
 let narrowEql (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
@@ -607,50 +614,76 @@ type Step(inst: Inst, input: ALU, output: ALU) =
             let input, output = input.SyncRegs output ALU.allRegs
             Step(inst, input, output)
 
-    member this.SyncVoidInternal () =
+    member this.SyncVoidInternal() =
         match inst with
-        | INP (_,REG r) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | ADD (r,REG other) ->
-            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
-            let input,output = input.SyncVoid output regs
-            Step(inst,input,output)
-        | ADD (r,CONST _) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | MUL (r,REG other) ->
-            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
-            let input,output = input.SyncVoid output regs
-            Step(inst,input,output)
-        | MUL (r,CONST _) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | DIV (r,_) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | MOD (r,_) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | EQL (r,REG other) ->
-            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
-            let input,output = input.SyncVoid output regs
-            Step(inst,input,output)
-        | EQL (r,CONST _) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | SET (r,REG other) ->
-            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
-            let input,output = input.SyncVoid output regs
-            Step(inst,input,output)
-        | SET (r,CONST _) ->
-            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
-            Step(inst,input,output)
-        | NOP -> 
-            let input,output = input.SyncVoid output ALU.allRegs
-            Step(inst,input,output)
+        | INP (r, _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | ADD (r, REG other) ->
+            let regs =
+                ALU.allRegs
+                |> List.filter (fun x -> x <> r && x <> other)
+
+            let input, output = input.SyncVoid output regs
+            Step(inst, input, output)
+        | ADD (r, CONST _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | MUL (r, REG other) ->
+            let regs =
+                ALU.allRegs
+                |> List.filter (fun x -> x <> r && x <> other)
+
+            let input, output = input.SyncVoid output regs
+            Step(inst, input, output)
+        | MUL (r, CONST _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | DIV (r, _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | MOD (r, _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | EQL (r, REG other) ->
+            let regs =
+                ALU.allRegs
+                |> List.filter (fun x -> x <> r && x <> other)
+
+            let input, output = input.SyncVoid output regs
+            Step(inst, input, output)
+        | EQL (r, CONST _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | SET (r, REG other) ->
+            let regs =
+                ALU.allRegs
+                |> List.filter (fun x -> x <> r && x <> other)
+
+            let input, output = input.SyncVoid output regs
+            Step(inst, input, output)
+        | SET (r, CONST _) ->
+            let input, output =
+                input.SyncVoid output (ALU.allRegsExcept r)
+
+            Step(inst, input, output)
+        | NOP ->
+            let input, output = input.SyncVoid output ALU.allRegs
+            Step(inst, input, output)
         | _ -> failwith $"Not implemented: {inst}"
-    
+
     member this.Update() =
         let step = this.NarrowValues()
         let step = step.SyncInternal()
@@ -696,7 +729,7 @@ let rec syncDown (program: List<Step>) =
 
 let syncUp (program: List<Step>) =
 
-    let rec sync (program:List<Step>) = 
+    let rec sync (program: List<Step>) =
         match program with
         | [] -> []
         | [ first ] -> [ first ]
@@ -709,17 +742,19 @@ let syncUp (program: List<Step>) =
             let step2 = step2.SetInput input2
             step2 :: (sync (step1 :: rest))
 
-    program |> List.rev |> sync |> List.rev 
+    program |> List.rev |> sync |> List.rev
 
 let solveStep (program: List<Step>) =
     program
     |> List.map (fun s -> s.NarrowValues())
     |> List.map (fun s -> s.SyncInternal())
+    |> List.map (fun s -> s.SyncVoidInternal())
     |> syncDown
     |> syncUp
 
 program
 |> solveStep
-// |> solveStep
+|> solveStep
+|> solveStep
 |> List.map (printfn "%A")
 |> ignore
