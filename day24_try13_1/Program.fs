@@ -585,6 +585,10 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     | UNKNOWN, UNKNOWN, _ -> skip
     | UNKNOWN, _, UNKNOWN -> skip
     | FROM _, UNKNOWN, FROM _ -> skip
+    | _ , CONST p, CONST r ->
+        let value = r.BinaryOperation (-) p |> Option.get |> CONST 
+        let reg = intersect reg value
+        reg,param,output  
     | FROM from, _, CONST c when c.Value = 0L ->
         printfn $"From_Const: Intersecting param {param} {TO (-from)} "
         let param = intersect param (TO(-from))
@@ -624,6 +628,8 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
         reg, param, output
     | FROM 0L, VALUES v, UNKNOWN when v.isNatural () -> reg, param, FROM 0L
     | FROM 0L, VALUES v, FROM 0L when v.ContainsAny((<>) 0L) -> skip
+    | FROM 0L, VALUES v, CONST c when c.Value = 0L && v.ContainsNone ((=) 0L) ->
+        output, param, output  
     | VALUES v1, VALUES v2, _ ->
         let result =
             v1.BinaryOperationWithValue(*) v2 |> VALUES
@@ -952,6 +958,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 22 program
+solveSteps 24 program
 |> List.map (printfn "%A")
 |> ignore
