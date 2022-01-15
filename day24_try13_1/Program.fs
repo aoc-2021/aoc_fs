@@ -694,13 +694,12 @@ let rec syncDown (program: List<Step>) =
         let step2 = step2.SetInput input2
         step1 :: (syncDown (step2 :: rest))
 
-let rec syncUp (program: List<Step>) =
-    let program = program |> List.rev
+let syncUp (program: List<Step>) =
 
-    let program =
+    let rec sync (program:List<Step>) = 
         match program with
         | [] -> []
-        | [ final ] -> [ final ]
+        | [ first ] -> [ first ]
         | step2 :: step1 :: rest ->
             let output1, input2 =
                 step1.Output.SyncRegs step2.Input ALU.allRegs
@@ -708,9 +707,9 @@ let rec syncUp (program: List<Step>) =
             let output1, input2 = output1.SyncVoid input2 ALU.allRegs
             let step1 = step1.SetOutput output1
             let step2 = step2.SetInput input2
-            step2 :: (syncUp (step1 :: rest))
+            step2 :: (sync (step1 :: rest))
 
-    program |> List.rev
+    program |> List.rev |> sync |> List.rev 
 
 let solveStep (program: List<Step>) =
     program
