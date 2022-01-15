@@ -38,8 +38,17 @@ type Sources(inputs: List<Map<int, Set<int64>>>) =
                     |> List.filter Option.isSome
                     |> List.map Option.get
         if deps.IsEmpty then None else Some(Sources(deps))
-        
-    
+   
+    member this.unionWith (other:Sources) =
+        Sources(List.concat [inputs;other.Inputs])
+    static member unionMany (sl:list<Sources>) =
+        let rec merge (sl:list<Sources>) =
+            match sl with
+            | [] -> failwith $"Not supported: unionMany {sl}"
+            | [last] -> last
+            | a::b::rest -> (a.unionWith b)::rest |> merge
+        merge sl 
+     
     override this.ToString() =
         let inputsToString (is: Set<int64>) =
             is
@@ -130,7 +139,26 @@ type SourcedValue(vals: Map<int64,SourcedNumber>) =
         |> Set.map (fun (i,num) -> i,num |> Option.get)
         |> Set.toList |> Map
         |> (fun m -> if m.IsEmpty then None else Some(m |> SourcedValue))
-         
+        
+    member this.BinaryOperationWithConst (op:int64->int64->int64) (other:SourcedNumber) =
+        let mergeEqualNums (ns:list<SourcedNumber>) =
+            let value = ns.Head.Value
+            let sources = ns |> List.map (fun v -> v.Sources) |> Sources.unionMany
+            SourcedNumber(value,sources)
+            
+        let result = 
+            vals |> Map.toList
+                 |> List.map snd 
+                 |> List.map (fun v -> v.BinaryOperation op other)
+                 |> List.filter (fun v -> v.IsSome)
+                 |> List.map (fun v -> v |> Option.get)
+                 |> List.groupBy (fun v -> v.Value)
+                 |> List.map (fun (v,vs) -> (v,mergeEqualNums vs))
+                 |> Map
+                 |> SourcedValue
+        result 
+                 
+        
     static member ofInts(inputs: List<int>) =
         inputs
         |> List.map (fun i -> i |> int64, SourcedNumber.ofAnonymous i)
@@ -142,9 +170,17 @@ type SourcedValue(vals: Map<int64,SourcedNumber>) =
         |> Map.values |> Seq.map (sprintf "%A")
         |> String.concat " "
 
-let n1 = SourcedNumber (2,Sources [([(1,[2L;3L]|>Set)] |> Map)])
-let n2 = SourcedNumber (4,Sources [[(1,[2L;4L]|>Set);(2,[5L;6L]|>Set)] |> Map])
-                                   
+let n1 = SourcedNumber (1,Sources [([(1,[2L;3L]|>Set)] |> Map)])
+let n2 = SourcedNumber (4,Sources [([(3,[1L;4L]|>Set)] |> Map)])
+let nx = SourcedNumber (2,Sources [[(2,[2L;4L]|>Set);(2,[5L;6L]|>Set)] |> Map])
+
+let v1 = [(1L,n1);(3L,n2)] |> Map |> SourcedValue
+let vx = v1.BinaryOperationWithConst (*) nx
+let vx2 = vx.BinaryOperationWithConst (fun _ _ -> 1L) n1 
+
+printfn $"vx={vx}"
+printfn $"vx2={vx2}"
+ 
 type Value =
     | UNKNOWN
     | CONST of SourcedNumber
