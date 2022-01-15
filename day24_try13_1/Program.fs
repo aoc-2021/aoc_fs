@@ -172,6 +172,14 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
         |> Map
         |> SourcedValue
 
+    member this.ContainsAny (pred:int64->bool) =
+        vals.Keys |> Seq.tryFind pred |> Option.isSome
+    
+    member this.ContainsNone (pred:int64->bool) =
+        vals.Keys |> Seq.tryFind pred |> Option.isNone
+   
+    member this.isNatural () = vals.Keys |> Seq.min >= 0L 
+     
     member this.intersectWithConst(num: SourcedNumber) : Option<SourcedNumber> =
         let addSource (sn: SourcedNumber) =
             let sources = sn.Sources.IntersectWith num.Sources
@@ -463,13 +471,25 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     match reg, param, output with
     | UNKNOWN, UNKNOWN, _ -> skip
     | _, UNKNOWN, UNKNOWN -> skip
+    | UNKNOWN, _, UNKNOWN -> skip
+    | CONST c, VALUES v, _ ->
+        let result =
+            v.BinaryOperationWithConst(*) c |> VALUES
+
+        let output = intersect output result
+        // TODO : filter input
+        reg, param, output
+    | FROM 0L, VALUES v, UNKNOWN when v.isNatural () ->
+        reg,param,FROM 0L 
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
 let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
     let skip = reg, output
 
-    match reg, param, output with
-    | UNKNOWN, _, UNKNOWN -> skip
+    match reg, output with
+    | UNKNOWN, UNKNOWN -> skip
+    | FROM 0L, UNKNOWN -> FROM 0L, FROM 0L
+    | FROM 0L, FROM 0L -> skip
     | _ -> failwith $"narrowDiv: Not implemented: {reg} {param} {output}"
 
 let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
@@ -483,6 +503,13 @@ let narrowMod (reg: Value) (param: int64) (output: Value) : Value * Value =
     | UNKNOWN, UNKNOWN -> FROM 0L, outputRange
     | FROM 0L, CONST c when c.Value = 0L -> skip
     | FROM 0L, VALUES v when v.Vals.ContainsKey 0L -> skip
+    | CONST a, _ ->
+        let result =
+            a.BinaryOperation(fun a b -> a % b) (SourcedNumber.ofAnonymous param)
+
+        let result = result |> Option.get |> CONST
+        let value = intersect output result
+        reg, value
     | _ -> failwith $"narrowMod: Not implemented: {reg} {param} {output}"
 
 let narrowEql (reg: Value) (param: Value) (output: Value) : Value * Value * Value =
@@ -752,9 +779,13 @@ let solveStep (program: List<Step>) =
     |> syncDown
     |> syncUp
 
-program
-|> solveStep
-|> solveStep
-|> solveStep
+let rec solveSteps (n: int) (program: list<Step>) =
+    if n < 1 then
+        program
+    else
+        let program = solveStep program
+        solveSteps (n - 1) program
+
+solveSteps 12 program
 |> List.map (printfn "%A")
 |> ignore
