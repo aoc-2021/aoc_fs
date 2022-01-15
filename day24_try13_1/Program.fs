@@ -477,11 +477,11 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     | UNKNOWN, UNKNOWN, _ -> skip
     | UNKNOWN, _, UNKNOWN -> skip
     | FROM _, UNKNOWN, FROM _ -> skip
-    | FROM from, UNKNOWN, CONST c when c.Value = 0L ->
-        let param = TO(-from)
+    | FROM from, _, CONST c when c.Value = 0L ->
+        let param = intersect param (TO(-from))
+        // TODO : filter reg 
         reg, param, output
-
-
+    | FROM _,_,FROM _ -> skip
     | CONST c, _, _ when c.Value = 0L ->
         let value = intersect param output
         reg, value, value
@@ -823,6 +823,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 17 program
+solveSteps 18 program
 |> List.map (printfn "%A")
 |> ignore
