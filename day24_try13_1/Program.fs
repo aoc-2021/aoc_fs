@@ -73,6 +73,7 @@ type Sources(inputs: list<Map<int, Set<int64>>>) =
                 Some(Sources(deps))
 
     member this.Normalize () =
+        let allInputs = [1L..9L] |> Set
         if inputs.IsEmpty || inputs.Length = 1 then this
         else
             let mergeGroup (keys:Set<int>,maps:list<Map<int,Set<int64>>>) =
@@ -94,8 +95,9 @@ type Sources(inputs: list<Map<int, Set<int64>>>) =
                     maps 
             let groups : list<Set<int>*list<Map<int,Set<int64>>>> =
                 inputs |> List.groupBy (fun (m:Map<int,Set<int64>>) -> m.Keys |> Set)
-            let merged = groups |> List.map mergeGroup |> List.concat 
-            merged |> Sources 
+            let merged = groups |> List.map mergeGroup |> List.concat
+            let merged = merged |> List.map (Map.filter (fun _ v -> v <> allInputs))
+            merged |> Sources
     member this.unionWith(other: Sources) =
         Sources(List.concat [ inputs; other.Inputs ])
 
@@ -873,6 +875,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 18 program
+solveSteps 19 program
 |> List.map (printfn "%A")
 |> ignore
