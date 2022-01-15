@@ -8,7 +8,7 @@ type Reg =
     | Y
     | Z
 
-type Sources(inputs: List<Map<int, Set<int64>>>) =
+type Sources(inputs: list<Map<int, Set<int64>>>) =
     member this.Inputs = inputs
 
     member this.IntersectWith(other: Sources) : Option<Sources> =
@@ -75,12 +75,27 @@ type Sources(inputs: List<Map<int, Set<int64>>>) =
     member this.Normalize () =
         if inputs.IsEmpty || inputs.Length = 1 then this
         else
-            let mergeGroup (keys,maps) =
-                maps 
-            let groups = inputs |> List.groupBy (Map.keys >> Set)
-            printfn $"Sources.Normalize: groups = {groups}"
-            groups |> List.map mergeGroup |> List.concat |> Sources 
-    
+            let mergeGroup (keys:Set<int>,maps:list<Map<int,Set<int64>>>) =
+                let onlySingleDiff =
+                    let allValues (id:int) = maps |> List.map (fun m -> m.TryFind id |> Option.get)
+                    let allSame (sets: list<Set<int64>>) = sets |> Set |> Set.count = 1
+                    let diffValues = allValues >> allSame >> not 
+                    printfn $"XYZ:: {keys}:{keys.GetType} {maps}:{maps.GetType}"
+                    let diffValues = keys |> Set.toList |> List.filter diffValues
+                    printfn $"diffValues={diffValues}"
+                    diffValues.Length <= 1
+                let mergeAll () : Map<int,Set<int64>> = 
+                    let allValues (id:int) = maps |> List.map (fun m -> m.TryFind id |> Option.get)
+                    let mergedValues = allValues >> Set.unionMany
+                    keys |> Set.toList |> List.map (fun i -> (i,mergedValues i) )|> Map
+                if onlySingleDiff then
+                    [ mergeAll () ]
+                else
+                    maps 
+            let groups : list<Set<int>*list<Map<int,Set<int64>>>> =
+                inputs |> List.groupBy (fun (m:Map<int,Set<int64>>) -> m.Keys |> Set)
+            let merged = groups |> List.map mergeGroup |> List.concat 
+            merged |> Sources 
     member this.unionWith(other: Sources) =
         Sources(List.concat [ inputs; other.Inputs ])
 
@@ -155,6 +170,7 @@ type SourcedNumber(value: int64, sources: Sources) =
         sources
         |> Option.map (fun i -> SourcedNumber(value, i))
 
+    member this.Normalize () = SourcedNumber(value,sources.Normalize())
     override this.ToString() =
         if sources.Inputs.IsEmpty then
             value |> string
@@ -274,6 +290,8 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
 
         result
 
+    member this.Normalize () = vals |> Map.map (fun _ v -> v.Normalize ()) |> SourcedValue
+    
     static member ofInts(inputs: List<int>) =
         inputs
         |> List.map (fun i -> i |> int64, SourcedNumber.ofAnonymous i)
@@ -333,6 +351,17 @@ let value2String (value: Value) =
     | VALUES v -> v |> string
     | REG r -> r |> string
     | VOID -> "∅"
+
+let normalizeValue (value:Value) =
+    let skip = value 
+    match value with
+    | UNKNOWN -> skip 
+    | CONST i -> i.Normalize () |> CONST 
+    | FROM i -> skip 
+    | TO i -> skip 
+    | VALUES v -> v.Normalize() |> VALUES 
+    | REG r -> skip 
+    | VOID -> skip 
 
 type Param =
     | R of Reg
@@ -410,6 +439,9 @@ type ALU(regs: Map<Reg, Value>) =
 
         sync this other regs
 
+    member this.Normalize () : ALU =
+        regs |> Map.map (fun _ v -> normalizeValue v) |> ALU 
+    
     override this.ToString() =
         ALU.allRegs
         |> List.filter (fun r -> this.Get r <> UNKNOWN)
@@ -765,6 +797,11 @@ type Step(inst: Inst, input: ALU, output: ALU) =
         let step = step.SyncInternal()
         step
 
+    member this.Normalize () =
+        let input = input.Normalize ()
+        let output = output.Normalize ()
+        Step (inst,input,output)
+    
     override this.ToString() =
         $"⍗ {inst |> inst2String, -15} IN:{input, -30}   OUT:{output, -30}"
 
@@ -825,6 +862,7 @@ let solveStep (program: List<Step>) =
     |> List.map (fun s -> s.NarrowValues())
     |> List.map (fun s -> s.SyncInternal())
     |> List.map (fun s -> s.SyncVoidInternal())
+    |> List.map (fun s -> s.Normalize())
     |> syncDown
     |> syncUp
 
