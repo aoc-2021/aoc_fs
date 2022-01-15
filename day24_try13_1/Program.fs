@@ -172,14 +172,14 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
         |> Map
         |> SourcedValue
 
-    member this.ContainsAny (pred:int64->bool) =
+    member this.ContainsAny(pred: int64 -> bool) =
         vals.Keys |> Seq.tryFind pred |> Option.isSome
-    
-    member this.ContainsNone (pred:int64->bool) =
+
+    member this.ContainsNone(pred: int64 -> bool) =
         vals.Keys |> Seq.tryFind pred |> Option.isNone
-   
-    member this.isNatural () = vals.Keys |> Seq.min >= 0L 
-     
+
+    member this.isNatural() = vals.Keys |> Seq.min >= 0L
+
     member this.intersectWithConst(num: SourcedNumber) : Option<SourcedNumber> =
         let addSource (sn: SourcedNumber) =
             let sources = sn.Sources.IntersectWith num.Sources
@@ -237,6 +237,30 @@ type SourcedValue(vals: Map<int64, SourcedNumber>) =
 
         result
 
+    member this.BinaryOperationWithValue (op: int64 -> int64 -> int64) (other: SourcedValue) =
+        let mergeEqualNums (ns: list<SourcedNumber>) =
+            let value = ns.Head.Value
+
+            let sources =
+                ns
+                |> List.map (fun v -> v.Sources)
+                |> Sources.unionMany
+
+            SourcedNumber(value, sources)
+
+        let result =
+            vals
+            |> Map.toList
+            |> List.map snd
+            |> List.map (fun v -> other.BinaryOperationWithConst op v)
+            |> List.map (fun v -> v.Vals.Values |> Seq.toList)
+            |> List.concat
+            |> List.groupBy (fun v -> v.Value)
+            |> List.map (fun (v, vs) -> (v, mergeEqualNums vs))
+            |> Map
+            |> SourcedValue
+
+        result
 
     static member ofInts(inputs: List<int>) =
         inputs
@@ -452,6 +476,12 @@ let narrowAdd (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
     match reg, param, output with
     | UNKNOWN, UNKNOWN, _ -> skip
     | UNKNOWN, _, UNKNOWN -> skip
+    | FROM _, UNKNOWN, FROM _ -> skip
+    | FROM from, UNKNOWN, CONST c when c.Value = 0L ->
+        let param = TO(-from)
+        reg, param, output
+
+
     | CONST c, _, _ when c.Value = 0L ->
         let value = intersect param output
         reg, value, value
@@ -479,9 +509,15 @@ let narrowMul (reg: Value) (param: Value) (output: Value) : Value * Value * Valu
         let output = intersect output result
         // TODO : filter input
         reg, param, output
-    | FROM 0L, VALUES v, UNKNOWN when v.isNatural () ->
-        reg,param,FROM 0L
-    | FROM 0L, VALUES v, FROM 0L when v.ContainsAny ((<>) 0L) -> skip
+    | FROM 0L, VALUES v, UNKNOWN when v.isNatural () -> reg, param, FROM 0L
+    | FROM 0L, VALUES v, FROM 0L when v.ContainsAny((<>) 0L) -> skip
+    | VALUES v1, VALUES v2, _ ->
+        let result =
+            v1.BinaryOperationWithValue(*) v2 |> VALUES
+
+        let output = intersect output result
+        // TODO: Filter
+        reg, param, output
     | _ -> failwith $"narrowMul: Not implemented: {reg} {param} {output}"
 
 let narrowDiv (reg: Value) (param: int64) (output: Value) : Value * Value =
@@ -787,6 +823,6 @@ let rec solveSteps (n: int) (program: list<Step>) =
         let program = solveStep program
         solveSteps (n - 1) program
 
-solveSteps 13 program
+solveSteps 17 program
 |> List.map (printfn "%A")
 |> ignore
