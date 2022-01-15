@@ -607,6 +607,50 @@ type Step(inst: Inst, input: ALU, output: ALU) =
             let input, output = input.SyncRegs output ALU.allRegs
             Step(inst, input, output)
 
+    member this.SyncVoidInternal () =
+        match inst with
+        | INP (_,REG r) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | ADD (r,REG other) ->
+            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
+            let input,output = input.SyncVoid output regs
+            Step(inst,input,output)
+        | ADD (r,CONST _) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | MUL (r,REG other) ->
+            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
+            let input,output = input.SyncVoid output regs
+            Step(inst,input,output)
+        | MUL (r,CONST _) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | DIV (r,_) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | MOD (r,_) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | EQL (r,REG other) ->
+            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
+            let input,output = input.SyncVoid output regs
+            Step(inst,input,output)
+        | EQL (r,CONST _) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | SET (r,REG other) ->
+            let regs = ALU.allRegs |> List.filter (fun x -> x <> r && x <> other)
+            let input,output = input.SyncVoid output regs
+            Step(inst,input,output)
+        | SET (r,CONST _) ->
+            let input,output = input.SyncVoid output (ALU.allRegsExcept r)
+            Step(inst,input,output)
+        | NOP -> 
+            let input,output = input.SyncVoid output ALU.allRegs
+            Step(inst,input,output)
+        | _ -> failwith $"Not implemented: {inst}"
+    
     member this.Update() =
         let step = this.NarrowValues()
         let step = step.SyncInternal()
@@ -664,7 +708,7 @@ let rec syncUp (program: List<Step>) =
             let output1, input2 = output1.SyncVoid input2 ALU.allRegs
             let step1 = step1.SetOutput output1
             let step2 = step2.SetInput input2
-            step2 :: (syncDown (step1 :: rest))
+            step2 :: (syncUp (step1 :: rest))
 
     program |> List.rev
 
