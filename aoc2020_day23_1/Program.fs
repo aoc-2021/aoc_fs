@@ -1,5 +1,5 @@
-let input = "398254716" // actual
-// let input = "389125467" // test 
+// let input = "398254716" // actual
+let input = "389125467" // test 
 
 type Ring (next:Map<int,int>, prev:Map<int,int>,start:int) =
     member this.Current = start
@@ -18,7 +18,17 @@ type Ring (next:Map<int,int>, prev:Map<int,int>,start:int) =
         printfn $"start={start} last={last}" 
         let next = next.Add (last,start)
         let prev = prev.Add (start,last)
-        Ring(next,prev,start)
+        if extended then
+            let last = prev[start]
+            let nextExtra = [10..999_999] |> List.map (fun i -> i,i+1)
+            let prevExtra = [10..999_999] |> List.map (fun i -> i+1,i)
+            let next = List.concat [(next |> Map.toList);nextExtra] |> Map
+            let prev = List.concat [(prev |> Map.toList);prevExtra] |> Map  
+            let next = next.Add(last,10).Add(1_000_000,start)
+            let prev = prev.Add(10,last).Add(start,1_000_000)
+            Ring (next,prev,start)
+        else 
+            Ring(next,prev,start)
     
     member this.Take3 () :int*int*int*Ring =
         let first = next[start]
@@ -53,24 +63,25 @@ type Ring (next:Map<int,int>, prev:Map<int,int>,start:int) =
 
 let crabTurn (ring:Ring) : Ring =
     let first,second,third,ring = ring.Take3 ()
-    printfn $"cups = {first}{second}{third} ring={ring}"
+    // printfn $"cups = {first}{second}{third} ring={ring}"
     let rec nextTarget (i:int) =
         let i = if i < 1 then 9 else i 
         if (i = first || i = second || i = third) then nextTarget (i-1) else i
     let target = nextTarget (ring.Current - 1)
     let ring = ring.PlaceAfter (target,first,second,third)
     let ring = ring.Step()
-    printfn $"ring={ring}"
+    // printfn $"ring={ring}"
     
      
     ring 
 
-let ring = Ring.ofString (input,false)
+let ring = Ring.ofString (input,true)
 printfn $"ring: {ring}"
 
 let rec crabTurns (n:int) (ring:Ring) : Ring =
+   if (n % 100000 = 0) then printfn $"{n}"
    if n = 0 then ring
    else crabTurns (n-1) (crabTurn ring)
 
-let ring2 = crabTurns 100 ring |> (fun ring -> ring.SetStart 1)
+let ring2 = crabTurns 10_000_000 ring |> (fun ring -> ring.SetStart 1)
 printfn $"ring2 = {ring2}"
